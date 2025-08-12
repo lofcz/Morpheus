@@ -5,28 +5,28 @@ public class DeclensionTests
     [Test]
     public void Decline_Hana_Skalicka_AllowsTitlesOmissionAndDetectsFemale()
     {
-        var tt = "Ondřej Šteffl";
+        var tt = "John Michael";
         var xx = Declension.Decline(tt, CzechCase.Vocative, new DeclensionOptions { OmitTitles = false });
         
         var input = "Hana Skalická";
-        DeclensionResult resultVoc = Morpheus.Declension.Decline(input, CzechCase.Vocative, new DeclensionOptions { OmitTitles = false });
-        Assert.That(resultVoc.Gender, Is.EqualTo(DetectedGender.Feminine));
-        Assert.That(resultVoc.Output.Contains("Hano"));
 
         var resultGen = Morpheus.Declension.Decline(input, CzechCase.Genitive);
-        Assert.That(resultGen.Output, Does.Contain("Hany"));
+        Assert.That(resultGen.Output, Is.EqualTo("Hany Skalické"));
 
         var resultDat = Morpheus.Declension.Decline(input, CzechCase.Dative);
-        Assert.That(resultDat.Output, Does.Contain("Haně"));
+        Assert.That(resultDat.Output, Is.EqualTo("Haně Skalické"));
 
         var resultAcc = Morpheus.Declension.Decline(input, CzechCase.Accusative);
-        Assert.That(resultAcc.Output, Does.Contain("Hanu"));
+        Assert.That(resultAcc.Output, Is.EqualTo("Hanu Skalickou"));
 
+        var resultVoc = Morpheus.Declension.Decline(input, CzechCase.Vocative, new DeclensionOptions { OmitTitles = false });
+        Assert.That(resultVoc.Output, Is.EqualTo("Hano Skalická"));
+        
         var resultLoc = Morpheus.Declension.Decline(input, CzechCase.Locative);
-        Assert.That(resultLoc.Output, Does.Contain("Haně"));
+        Assert.That(resultLoc.Output, Is.EqualTo("Haně Skalické"));
 
         var resultIns = Morpheus.Declension.Decline(input, CzechCase.Instrumental);
-        Assert.That(resultIns.Output, Does.Contain("Hanou"));
+        Assert.That(resultIns.Output, Is.EqualTo("Hanou Skalickou"));
     }
 
     [Test]

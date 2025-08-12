@@ -21,24 +21,25 @@ internal static class Program
 
         var stage = args[0].ToLowerInvariant();
         
-        switch (stage)
-        {
-            case "stage1":
-                await Stage1.Do();
-                break;
-            case "stage2":
-                await Stage2.Do();
-                break;
-            case "stage3":
-                await Stage3.Do();
-                break;
-            case "stage4":
-                await Stage4.Do();
-                break;
-            default:
-                Console.WriteLine($"Unknown stage: {stage}");
-                Console.WriteLine("Available stages: stage1, stage2, stage3, stage4");
-                break;
-        }
+                    switch (stage)
+            {
+                case "stage1":
+                    await Stage1.Do();
+                    break;
+                case "stage2":
+                    await Stage2.Do();
+                    break;
+                case "stage3":
+                    await Stage3.Do();
+                    break;
+                case "stage4":
+                    await Stage4.Do();
+                    break;
+
+                default:
+                    Console.WriteLine($"Unknown stage: {stage}");
+                    Console.WriteLine("Available stages: stage1, stage2, stage3, stage4");
+                    break;
+            }
     }
 }

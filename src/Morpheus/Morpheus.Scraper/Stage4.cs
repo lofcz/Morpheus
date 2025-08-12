@@ -40,8 +40,10 @@ public static class Stage4
             {
                 if (variant.Declension == null) continue;
 
-                // Create unique key for this variant (name + gender + type)
-                var variantKey = $"{normalizedName}_{variant.Gender}_{variant.Type}";
+                // Create unique key for this variant (name + gender + type) using integer values
+                var genderInt = ConvertGenderToInt(variant.Gender);
+                var typeInt = ConvertTypeToInt(variant.Type);
+                var variantKey = $"{normalizedName}_{genderInt}_{typeInt}";
 
                 // Store gender and type info as enum values
                 if (!genderData.ContainsKey(normalizedName))
@@ -289,5 +291,26 @@ public static class Stage4
     private static string EscapeString(string input)
     {
         return input.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+    }
+
+    private static int ConvertGenderToInt(NameGender gender)
+    {
+        return gender switch
+        {
+            NameGender.Masculine => 0,
+            NameGender.Feminine => 1,
+            NameGender.Other => 2,
+            _ => 2
+        };
+    }
+
+    private static int ConvertTypeToInt(NameType type)
+    {
+        return type switch
+        {
+            NameType.FirstName => 0,
+            NameType.LastName => 1,
+            _ => 0
+        };
     }
 }
