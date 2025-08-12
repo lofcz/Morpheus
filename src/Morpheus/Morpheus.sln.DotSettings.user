@@ -5,4 +5,11 @@
     &lt;TestId&gt;NUnit3x::E5164C08-CA42-4CF1-ABB9-DA9FC8D9050D::net8.0::Morpheus.Tests.SpecialDumpTests.Dump_Names_AllCases&lt;/TestId&gt;&#xD;
     &lt;TestId&gt;NUnit3x::E5164C08-CA42-4CF1-ABB9-DA9FC8D9050D::net8.0::Morpheus.Tests.SpecialDumpTests&lt;/TestId&gt;&#xD;
   &lt;/TestAncestor&gt;&#xD;
+&lt;/SessionState&gt;</s:String>
+	<s:String x:Key="/Default/Environment/UnitTesting/UnitTestSessionStore/Sessions/=8d35e27e_002D34d5_002D4434_002D9bb8_002D75746ab22f7c/@EntryIndexedValue">&lt;SessionState ContinuousTestingMode="0" Name="DeclensionTests" xmlns="urn:schemas-jetbrains-com:jetbrains-ut-session"&gt;&#xD;
+  &lt;TestAncestor&gt;&#xD;
+    &lt;TestId&gt;NUnit3x::E5164C08-CA42-4CF1-ABB9-DA9FC8D9050D::net8.0::Morpheus.Tests.DeclensionTests&lt;/TestId&gt;&#xD;
+    &lt;TestId&gt;NUnit3x::E5164C08-CA42-4CF1-ABB9-DA9FC8D9050D::net8.0::Morpheus.Tests.SpecialDumpTests.Dump_Names_AllCases&lt;/TestId&gt;&#xD;
+    &lt;TestId&gt;NUnit3x::E5164C08-CA42-4CF1-ABB9-DA9FC8D9050D::net8.0::Morpheus.Tests.SpecialDumpTests&lt;/TestId&gt;&#xD;
+  &lt;/TestAncestor&gt;&#xD;
 &lt;/SessionState&gt;</s:String></wpf:ResourceDictionary>

@@ -16,12 +16,19 @@ public enum CzechCase
     Instrumental = 7 // 7. pád – s kým, s čím
 }
 
-public enum DetectedEntityKind
+public enum DetectedGender
 {
-    Male,
-    Female,
-    Ambiguous,   // obojetné jméno
-    Company      // právnická osoba/entita
+    Masculine,
+    Feminine,
+    Ambiguous
+}
+
+public enum DetectedEntityType
+{
+    Name,
+    Company,
+    Nickname,
+    Invalid
 }
 
 public sealed class DeclensionOptions
@@ -37,7 +44,8 @@ public sealed class DeclensionResult
     public required string Input { get; init; }
     public required string Output { get; init; }
     public required CzechCase TargetCase { get; init; }
-    public required DetectedEntityKind EntityKind { get; init; }
+    public required DetectedGender Gender { get; init; }
+    public required DetectedEntityType EntityType { get; init; }
     public string? Explanation { get; init; }
 }
 
@@ -51,280 +59,233 @@ public static class Declension
         "PhDr.", "ThDr.", "Th.D.", "Ph.D.", "DiS.", "MBA", "LL.M.", "Jr.", "Sr."
     };
 
-    // Very lightweight gender detection as a baseline.
-    // We will extend this with suffix dictionaries later.
-    private static DetectedEntityKind DetectEntityKind(string wholeInput, string firstName, string? lastName)
+    // Step 1: Normalize input (trim, spaces, dash types)
+    private static string NormalizeInput(string input)
     {
-        // Prefer company detection on the full original input to catch suffixes like "s.r.o." even if not tokenized as a word
-        var full = wholeInput;
-        if (string.IsNullOrWhiteSpace(full) && string.IsNullOrWhiteSpace(firstName)) return DetectedEntityKind.Ambiguous;
+        if (string.IsNullOrWhiteSpace(input)) return string.Empty;
+        
+        // Trim and normalize spaces
+        var normalized = input.Trim();
+        normalized = Regex.Replace(normalized, @"\s{2,}", " "); // Multiple spaces to single space
+        
+        // Normalize various dash types to standard dash
+        normalized = normalized.Replace('–', '-').Replace('—', '-').Replace('−', '-');
+        
+        return normalized;
+    }
 
-        // Company heuristics: s.r.o., a.s., SE, s.p., spol., s. r. o., & Co, s.r.o
+    // Step 2: Handle titles (detect and temporarily remove)
+    private static (List<string> titles, string inputWithoutTitles) ExtractTitles(string input)
+    {
+        var tokens = Tokenize(input);
+        var titles = tokens.Where(t => t.IsTitle).Select(t => t.Original).ToList();
+        var wordsOnly = tokens.Where(t => t.IsWord).Select(t => t.Original);
+        var inputWithoutTitles = string.Join(" ", wordsOnly);
+        
+        return (titles, inputWithoutTitles);
+    }
+
+    // Step 3: Infer gender using prebuilt data + heuristics
+    private static DetectedGender InferGender(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return DetectedGender.Ambiguous;
+
+        var words = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) return DetectedGender.Ambiguous;
+
+        var firstName = words[0];
+        var lastName = words.Length > 1 ? words[1] : null;
+
+        // Try scraped gender data first (most accurate)
+        var normalizedFirstName = firstName.ToLowerInvariant().Trim();
+        if (Data.ScrapedDeclensionData.Genders.TryGetValue(normalizedFirstName, out var scrapedGender))
+        {
+            return scrapedGender switch
+            {
+                0 => DetectedGender.Masculine,
+                1 => DetectedGender.Feminine,
+                _ => DetectedGender.Ambiguous
+            };
+        }
+
+        // Fallback: use generated dataset for first names
+        var firstCandidates = new List<string> { firstName };
+        if (firstName.Contains('-')) 
+            firstCandidates.AddRange(firstName.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+        foreach (var cand in firstCandidates)
+        {
+            if (Morpheus.Data.NameGenderData.Names.TryGetValue(cand, out var g))
+            {
+                if (g == Morpheus.Data.NameGenderData.NameGender.Female) return DetectedGender.Feminine;
+                if (g == Morpheus.Data.NameGenderData.NameGender.Male) return DetectedGender.Masculine;
+            }
+        }
+
+        // Surname morphology heuristics
+        if (!string.IsNullOrWhiteSpace(lastName))
+        {
+            if (lastName.EndsWith("ová", StringComparison.OrdinalIgnoreCase)) return DetectedGender.Feminine;
+            if (lastName.EndsWith("á", StringComparison.OrdinalIgnoreCase)) return DetectedGender.Feminine;
+        }
+
+        return DetectedGender.Ambiguous;
+    }
+
+    // Step 4: Infer entity type (name, company, nickname, invalid)
+    private static DetectedEntityType InferEntityType(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return DetectedEntityType.Invalid;
+
+        // Company heuristics
         var companyPatterns = new[]
         {
             "s\\.\\s*r\\.\\s*o\\.", "a\\.s\\.", "s\\.p\\.", "spol\\.", "\\bSE\\b", "\\bHolding\\b", "&\\s*Co"
         };
         foreach (var pat in companyPatterns)
         {
-            if (Regex.IsMatch(full, pat, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            if (Regex.IsMatch(input, pat, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             {
-                return DetectedEntityKind.Company;
+                return DetectedEntityType.Company;
             }
         }
 
-        // Primary: use generated dataset (first name lookup); treat Neutral as unknown and continue heuristics
-        if (!string.IsNullOrWhiteSpace(firstName))
+        // Check if it looks like a proper name
+        if (Regex.IsMatch(input, @"^[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]+(\s+[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]+)*$"))
         {
-            // Consider hyphenated compound first names as well
-            var firstCandidates = new List<string> { firstName };
-            if (firstName.Contains('-')) firstCandidates.AddRange(firstName.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-
-            foreach (var cand in firstCandidates)
-            {
-                if (Morpheus.Data.NameGenderData.Names.TryGetValue(cand, out var g))
-                {
-                    if (g == Morpheus.Data.NameGenderData.NameGender.Female) return DetectedEntityKind.Female;
-                    if (g == Morpheus.Data.NameGenderData.NameGender.Male) return DetectedEntityKind.Male;
-                    // Neutral -> continue to heuristics
-                }
-            }
+            return DetectedEntityType.Name;
         }
 
-        // Surname morphology (Czech): strong female indicators
-        if (!string.IsNullOrWhiteSpace(lastName))
-        {
-            var ln = lastName;
-            if (ln.EndsWith("ová", StringComparison.OrdinalIgnoreCase)) return DetectedEntityKind.Female;
-            if (ln.EndsWith("á", StringComparison.OrdinalIgnoreCase)) return DetectedEntityKind.Female; // adjective-like feminine
-        }
-
-        // No evidence → Ambiguous (do not guess)
-        return DetectedEntityKind.Ambiguous;
+        // Everything else could be nickname or invalid
+        return DetectedEntityType.Nickname;
     }
 
     public static DeclensionResult Decline(string input, CzechCase @case, DeclensionOptions? options = null)
     {
         options ??= new DeclensionOptions();
-        var tokens = Tokenize(input);
 
-        // Extract titles, first name, last name (very simple heuristic for now)
-        var titles = tokens.Where(t => t.IsTitle).Select(t => t.Original).ToList();
-        var words = tokens.Where(t => t.IsWord).Select(t => t.Original).ToList();
+        // Step 1: Normalize input
+        var normalizedInput = NormalizeInput(input);
 
-        string? firstName = words.FirstOrDefault();
-        string? lastName = words.Skip(1).FirstOrDefault();
+        // Step 2: Handle titles (detect and temporarily remove)
+        var (titleStrings, inputWithoutTitles) = ExtractTitles(normalizedInput);
 
-        var kind = DetectEntityKind(input, firstName ?? string.Empty, lastName);
+        // Step 3: Infer gender
+        var detectedGender = InferGender(inputWithoutTitles);
 
-        // Apply options to omit elements
-        if (options.OmitTitles) titles.Clear();
-        if (options.OmitFirstName && firstName != null)
-        {
-            firstName = null;
-        }
-        if (options.OmitLastName && lastName != null)
-        {
-            lastName = null;
-        }
+        // Step 4: Infer entity type
+        var entityType = InferEntityType(inputWithoutTitles);
 
-        // Declension per token (apply to all words)
-        var outputParts = new List<string>();
+        // Step 5: Infer the declension result
+        var declinedOutput = InferDeclensionResult(inputWithoutTitles, @case, detectedGender, entityType, options);
 
-        if (titles.Count > 0 && !options.OmitTitles)
-        {
-            outputParts.Add(string.Join(" ", titles));
-        }
-
-        var wordList = words.ToList();
-        for (int i = 0; i < wordList.Count; i++)
-        {
-            var w = wordList[i];
-            bool isFirst = i == 0;
-            bool skip = (isFirst && options.OmitFirstName) || (!isFirst && options.OmitLastName);
-            if (skip) continue;
-
-            // Use reference rules for each token; special surname handling stays in rules
-            var declined = DeclineToken(w, @case, kind, isFirst);
-            outputParts.Add(declined);
-        }
-
-        var output = string.Join(" ", outputParts.Where(p => !string.IsNullOrWhiteSpace(p)));
+        // Reconstruct final output with titles if not omitted
+        var finalOutput = ReconstructOutput(titleStrings, declinedOutput, options);
 
         string? explanation = null;
         if (options.Explain)
         {
-            explanation = $"case={@case}; kind={kind}";
+            explanation = $"case={@case}; gender={detectedGender}; type={entityType}";
         }
 
         return new DeclensionResult
         {
             Input = input,
-            Output = output,
+            Output = finalOutput,
             TargetCase = @case,
-            EntityKind = kind,
+            Gender = detectedGender,
+            EntityType = entityType,
             Explanation = explanation
         };
     }
 
-    private static string DeclineFirstName(string name, CzechCase @case, DetectedEntityKind kind)
+    // Step 5: Infer the declension result
+    private static string InferDeclensionResult(string input, CzechCase @case, DetectedGender gender, DetectedEntityType entityType, DeclensionOptions options)
     {
-        var declined = DeclineByReferenceRules(name, @case, kind);
-        return MatchCasing(name, declined);
-    }
+        if (string.IsNullOrWhiteSpace(input)) return string.Empty;
+        if (entityType == DetectedEntityType.Company) return input; // Companies don't decline
 
-    private static string DeclineLastName(string surname, CzechCase @case, DetectedEntityKind kind)
-    {
-        var lower = surname.ToLowerInvariant();
+        var words = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var declinedWords = new List<string>();
 
-        // Female surnames ending with -ová behave like adjectives across cases
-        if (lower.EndsWith("ová"))
+        for (int i = 0; i < words.Length; i++)
         {
-            return MatchCasing(surname, @case switch
-            {
-                CzechCase.Nominative => surname,
-                CzechCase.Genitive => ReplaceEnding(surname, "á", "é"),
-                CzechCase.Dative => ReplaceEnding(surname, "á", "é"),
-                CzechCase.Accusative => ReplaceEnding(surname, "á", "ou"),
-                CzechCase.Vocative => surname, // surnames usually unchanged in vocative
-                CzechCase.Locative => ReplaceEnding(surname, "á", "é"),
-                CzechCase.Instrumental => ReplaceEnding(surname, "á", "ou"),
-                _ => surname
-            });
+            var word = words[i];
+            bool isFirst = i == 0;
+            bool skip = (isFirst && options.OmitFirstName) || (!isFirst && options.OmitLastName);
+            if (skip) continue;
+
+            var declined = DeclineWord(word, @case, gender, entityType, isFirst);
+            declinedWords.Add(declined);
         }
 
-        // Female adjective-like surnames ending with -á (e.g., Skalická)
-        if (kind == DetectedEntityKind.Female && lower.EndsWith("á"))
-        {
-            return MatchCasing(surname, @case switch
-            {
-                CzechCase.Nominative => surname,
-                CzechCase.Genitive => ReplaceEnding(surname, "á", "é"),
-                CzechCase.Dative => ReplaceEnding(surname, "á", "é"),
-                CzechCase.Accusative => ReplaceEnding(surname, "á", "ou"),
-                CzechCase.Vocative => surname,
-                CzechCase.Locative => ReplaceEnding(surname, "á", "é"),
-                CzechCase.Instrumental => ReplaceEnding(surname, "á", "ou"),
-                _ => surname
-            });
-        }
-
-        // Apply reference rules for general surname handling
-        var declined = DeclineByReferenceRules(surname, @case, kind);
-        return MatchCasing(surname, declined);
+        return string.Join(" ", declinedWords);
     }
 
-    private static string DeclineToken(string token, CzechCase @case, DetectedEntityKind kind, bool isFirstWord)
+    private static string ReconstructOutput(List<string> titles, string declinedContent, DeclensionOptions options)
     {
-        // First-name specific corrections where reference rules bias towards surnames
-        if (isFirstWord && kind == DetectedEntityKind.Female)
+        var parts = new List<string>();
+
+        if (titles.Count > 0 && !options.OmitTitles)
         {
-            var s = token.ToLowerInvariant();
-            if (@case == CzechCase.Locative)
+            parts.Add(string.Join(" ", titles));
+        }
+
+        if (!string.IsNullOrWhiteSpace(declinedContent))
+        {
+            parts.Add(declinedContent);
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    private static string DeclineWord(string word, CzechCase @case, DetectedGender gender, DetectedEntityType entityType, bool isFirstWord)
+    {
+        // Try prebuilt lookup first
+        var prebuiltResult = TryPrebuiltLookup(word, @case, gender, entityType, isFirstWord);
+        if (!string.IsNullOrEmpty(prebuiltResult))
+        {
+            return MatchCasing(word, prebuiltResult);
+        }
+
+        // Fallback to rule-based declension
+        var ruleResult = @case switch
+        {
+            CzechCase.Genitive => Rules.GenitivRules.Transform(word),
+            CzechCase.Dative => Rules.DativRules.Transform(word),
+            CzechCase.Accusative => Rules.AkuzativRules.Transform(word),
+            CzechCase.Vocative => Rules.VokativRules.Transform(word),
+            CzechCase.Locative => Rules.LokativRules.Transform(word),
+            CzechCase.Instrumental => Rules.InstrumentalRules.Transform(word),
+            _ => word
+        };
+
+        return MatchCasing(word, ruleResult);
+    }
+    
+    private static string TryPrebuiltLookup(string original, CzechCase @case, DetectedGender gender, DetectedEntityType entityType, bool isFirstWord)
+    {
+        var normalizedName = original.ToLowerInvariant().Trim();
+        
+        // Map enums to integers for variant key construction
+        var genderInt = (int)gender;
+        var typeInt = isFirstWord ? 0 : 1; // 0 = FirstName, 1 = LastName
+        
+        // Construct variant key: "name_gender_type"
+        var variantKey = $"{normalizedName}_{genderInt}_{typeInt}";
+        
+        // Try to find exact variant match
+        if (Data.ScrapedDeclensionData.Declensions.TryGetValue(variantKey, out var declensions))
+        {
+            var caseKey = (int)@case; // Direct cast from CzechCase enum to int
+            
+            if (declensions.TryGetValue(caseKey, out var form))
             {
-                if (s.Length >= 2 && s.EndsWith("a") && (s[^2] == 'd' || s[^2] == 'n'))
-                {
-                    // Hana -> Haně, Linda -> Lindě, Anna -> Anně
-                    var fixedForm = s.Substring(0, s.Length - 1) + "ě";
-                    return MatchCasing(token, fixedForm);
-                }
+                return form;
             }
         }
-
-        return DeclineByReferenceRules(token, @case, kind);
-    }
-
-    // Very small baseline of vocative logic to be replaced by full rule engine later
-    private static string DeclineToVocativeBaseline(string text, bool isFemale)
-    {
-        var lower = text.ToLowerInvariant();
-        if (isFemale)
-        {
-            if (lower.EndsWith("a")) return ReplaceEnding(text, "a", "o");
-            return text; // women surnames generally unchanged
-        }
-
-        if (lower.EndsWith("r")) return text + "e"; // Petr -> Petře (approx.)
-        if (lower.EndsWith("l")) return text + "e"; // Karel -> Karle (approx., not exact)
-        if (lower.EndsWith("c")) return ReplaceEnding(text, "ec", "če");
-        if (lower.EndsWith("k")) return text + "u"; // Novák -> Nováku
-        if (lower.EndsWith("s")) return text + "i"; // Tomás-> Tomási (approx.)
-        if (lower.EndsWith("o")) return text; // Hugo -> Hugo
-        return text;
-    }
-
-    private static string GenitiveHeuristic(string name)
-    {
-        var lower = name.ToLowerInvariant();
-        if (lower.EndsWith("á")) return ReplaceEnding(name, "á", "é");
-        if (lower.EndsWith("o")) return ReplaceEnding(name, "o", "a");
-        if (lower.EndsWith("l")) return name + "a"; // many male names
-        if (lower.EndsWith("k")) return name + "a";
-        return name + "a";
-    }
-
-    private static string DativeHeuristic(string name)
-    {
-        var lower = name.ToLowerInvariant();
-        if (lower.EndsWith("á")) return ReplaceEnding(name, "á", "é");
-        if (lower.EndsWith("o")) return name + "vi";
-        if (lower.EndsWith("l")) return name + "ovi";
-        if (lower.EndsWith("k")) return name + "ovi";
-        return name + "ovi";
-    }
-
-    private static string AccusativeHeuristic(string name)
-    {
-        var lower = name.ToLowerInvariant();
-        if (lower.EndsWith("á")) return ReplaceEnding(name, "á", "ou");
-        if (lower.EndsWith("e")) return ReplaceEnding(name, "e", "i");
-        if (lower.EndsWith("ř") || lower.EndsWith("ž")) return name + "e";
-        if (lower.EndsWith("k")) return name + "a";
-        return name + "a";
-    }
-
-    private static string LocativeHeuristic(string name)
-    {
-        var lower = name.ToLowerInvariant();
-        if (lower.EndsWith("á")) return ReplaceEnding(name, "á", "é");
-        if (lower.EndsWith("o")) return name + "vi";
-        if (lower.EndsWith("l")) return name + "ovi";
-        if (lower.EndsWith("k")) return name + "ovi";
-        return name + "ovi";
-    }
-
-    private static string InstrumentalHeuristic(string name)
-    {
-        var lower = name.ToLowerInvariant();
-        if (lower.EndsWith("á")) return ReplaceEnding(name, "á", "ou");
-        if (lower.EndsWith("a")) return ReplaceEnding(name, "a", "ou");
-        if (lower.EndsWith("o")) return ReplaceEnding(name, "o", "em");
-        if (lower.EndsWith("k")) return name + "em";
-        return name + "em";
-    }
-
-    private static string ReplaceEnding(string original, string oldEnding, string newEnding)
-    {
-        if (original.EndsWith(oldEnding, StringComparison.OrdinalIgnoreCase))
-        {
-            return original.Substring(0, original.Length - oldEnding.Length) + newEnding;
-        }
-        return original + newEnding;
-    }
-
-    // Use faithful rule ports from Morpheus.Rules.*
-    private static string DeclineByReferenceRules(string original, CzechCase @case, DetectedEntityKind kind)
-    {
-        if (kind == DetectedEntityKind.Company) return original;
-        return @case switch
-        {
-            CzechCase.Genitive => Rules.GenitivRules.Transform(original),
-            CzechCase.Dative => Rules.DativRules.Transform(original),
-            CzechCase.Accusative => Rules.AkuzativRules.Transform(original),
-            CzechCase.Vocative => Rules.VokativRules.Transform(original),
-            CzechCase.Locative => Rules.LokativRules.Transform(original),
-            CzechCase.Instrumental => Rules.InstrumentalRules.Transform(original),
-            _ => original
-        };
+        
+        return string.Empty; // Not found in prebuilt data
     }
     private static string MatchCasing(string pattern, string value)
     {

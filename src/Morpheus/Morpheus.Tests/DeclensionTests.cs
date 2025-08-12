@@ -5,9 +5,12 @@ public class DeclensionTests
     [Test]
     public void Decline_Hana_Skalicka_AllowsTitlesOmissionAndDetectsFemale()
     {
+        var tt = "Ondřej Šteffl";
+        var xx = Declension.Decline(tt, CzechCase.Vocative, new DeclensionOptions { OmitTitles = false });
+        
         var input = "Hana Skalická";
-        var resultVoc = Morpheus.Declension.Decline(input, CzechCase.Vocative, new DeclensionOptions { OmitTitles = false });
-        Assert.That(resultVoc.EntityKind, Is.EqualTo(DetectedEntityKind.Female));
+        DeclensionResult resultVoc = Morpheus.Declension.Decline(input, CzechCase.Vocative, new DeclensionOptions { OmitTitles = false });
+        Assert.That(resultVoc.Gender, Is.EqualTo(DetectedGender.Feminine));
         Assert.That(resultVoc.Output.Contains("Hano"));
 
         var resultGen = Morpheus.Declension.Decline(input, CzechCase.Genitive);
@@ -44,7 +47,7 @@ public class DeclensionTests
     {
         var input = "ACME s.r.o.";
         var res = Morpheus.Declension.Decline(input, CzechCase.Dative);
-        Assert.That(res.EntityKind, Is.EqualTo(DetectedEntityKind.Company));
+        Assert.That(res.EntityType, Is.EqualTo(DetectedEntityType.Company));
         Assert.That(res.Output, Is.EqualTo(input));
     }
 }
