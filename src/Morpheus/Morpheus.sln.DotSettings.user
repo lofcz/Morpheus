@@ -1,0 +1,8 @@
+﻿<wpf:ResourceDictionary xml:space="preserve" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:s="clr-namespace:System;assembly=mscorlib" xmlns:ss="urn:shemas-jetbrains-com:settings-storage-xaml" xmlns:wpf="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+	<s:String x:Key="/Default/Environment/UnitTesting/UnitTestSessionStore/Sessions/=44932538_002D7790_002D4347_002D98e8_002D8f361f73b8ae/@EntryIndexedValue">&lt;SessionState ContinuousTestingMode="0" IsActive="True" Name="Decline_Hana_Skalicka_AllowsTitlesOmissionAndDetectsFemale" xmlns="urn:schemas-jetbrains-com:jetbrains-ut-session"&gt;&#xD;
+  &lt;TestAncestor&gt;&#xD;
+    &lt;TestId&gt;NUnit3x::E5164C08-CA42-4CF1-ABB9-DA9FC8D9050D::net8.0::Morpheus.Tests.DeclensionTests&lt;/TestId&gt;&#xD;
+    &lt;TestId&gt;NUnit3x::E5164C08-CA42-4CF1-ABB9-DA9FC8D9050D::net8.0::Morpheus.Tests.SpecialDumpTests.Dump_Names_AllCases&lt;/TestId&gt;&#xD;
+    &lt;TestId&gt;NUnit3x::E5164C08-CA42-4CF1-ABB9-DA9FC8D9050D::net8.0::Morpheus.Tests.SpecialDumpTests&lt;/TestId&gt;&#xD;
+  &lt;/TestAncestor&gt;&#xD;
+&lt;/SessionState&gt;</s:String></wpf:ResourceDictionary>

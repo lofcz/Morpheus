@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <LangVersion>preview</LangVersion>
+        <TargetFramework>net8.0</TargetFramework>
+    </PropertyGroup>
+  
+
+    <!-- Temporarily exclude modern implementation for netstandard2.0; will be backported later. -->
+    <ItemGroup Condition="'$(TargetFramework)'=='netstandard2.0'">
+        <Compile Remove="Declension.cs" />
+    </ItemGroup>
+
+</Project>
