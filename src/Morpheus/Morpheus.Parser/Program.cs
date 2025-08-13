@@ -18,11 +18,18 @@ class Program
         // Register encoding provider for older Excel files
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         
-        string excelPath = "jmena.xls";
+        BuildOrRunCombinedIndex();
+    }
+
+
+    static void BuildOrRunCombinedIndex()
+    {
+        string firstNamesExcelPath = "jmena.xls";
+        string surnamesExcelPath = "prijmeni.xls";
         string jsonOutputPath = "names_output.json";
         string indexOutputPath = "names_index.bk";
         
-        Console.WriteLine("Parsing Czech government name data...");
+        Console.WriteLine("Parsing Czech government names and surnames (combined index)...");
         
         try
         {
@@ -37,14 +44,106 @@ class Program
                 return;
             }
             
-            Console.WriteLine("No existing index found. Building new index from Excel file...\n");
+            Console.WriteLine("No existing index found. Building new combined index from Excel files...\n");
             
-            // Parse the Excel file
-            var nameEntries = ParseExcelFile(excelPath);
-            Console.WriteLine($"Parsed {nameEntries.Count} unique names.");
+            // Parse first names with counts
+            var parsedFirstNames = ParseFirstNamesWithCounts(firstNamesExcelPath);
+            var firstNameEntries = parsedFirstNames.Entries;
+            var firstNameCounts = parsedFirstNames.IndexKeyToCount;
+            Console.WriteLine($"Parsed {firstNameEntries.Count} unique first names.");
+
+            // Parse surnames
+            var surnameCounts = ParseSurnameCounts(surnamesExcelPath);
+            Console.WriteLine($"Parsed {surnameCounts.Count} unique surnames.");
+
+            // Combine into dictionary by index key, union roles, prefer gender from first-name data
+            var combined = new Dictionary<string, CombinedItem>(StringComparer.Ordinal);
+
+            // Add first names (role = First)
+            foreach (var entry in firstNameEntries)
+            {
+                var idx = entry.IndexKey;
+                if (!combined.TryGetValue(idx, out var item))
+                {
+                    combined[idx] = new CombinedItem
+                    {
+                        DisplayName = entry.Name, // keep diacritics/casing for display
+                        IndexKey = entry.IndexKey,
+                        Gender = entry.Gender,
+                        Role = NameRole.First,
+                        FirstCount = firstNameCounts.GetValueOrDefault(idx, 0)
+                    };
+                }
+                else
+                {
+                    item.Role |= NameRole.First;
+                    // Keep any non-unknown gender if available
+                    if (item.Gender is SimpleGender s1 && s1.Type == SimpleGender.GenderType.Unknown)
+                    {
+                        item.Gender = entry.Gender;
+                    }
+                    item.FirstCount = firstNameCounts.TryGetValue(idx, out var c2) ? c2 : item.FirstCount;
+                }
+            }
+
+            // Add surnames (role = Surname, gender = Unknown if only surname)
+            foreach (var surnameOriginal in ParseSurnamesOriginals(surnamesExcelPath))
+            {
+                var surnameIndexKey = CreateIndexKey(surnameOriginal);
+                if (string.IsNullOrEmpty(surnameIndexKey)) continue;
+
+                if (!combined.TryGetValue(surnameIndexKey, out var item))
+                {
+                    combined[surnameIndexKey] = new CombinedItem
+                    {
+                        DisplayName = NormalizeName(surnameOriginal), // normalized capitalization for display
+                        IndexKey = surnameIndexKey,
+                        Gender = new SimpleGender(SimpleGender.GenderType.Unknown),
+                        Role = NameRole.Surname,
+                        SurnameCount = surnameCounts.GetValueOrDefault(surnameIndexKey, 0)
+                    };
+                }
+                else
+                {
+                    item.Role |= NameRole.Surname;
+                    if (item.SurnameCount == 0 && surnameCounts.TryGetValue(surnameIndexKey, out var sc2))
+                    {
+                        item.SurnameCount = sc2;
+                    }
+                    // If gender is unknown, keep; otherwise preserve the existing gender from first-name data
+                }
+            }
+
+            // Apply dominance rule for role pollution: 95% threshold and minimum 10 total
+            foreach (var kvp in combined)
+            {
+                var item = kvp.Value;
+                if (item.Role.HasFlag(NameRole.First) && item.Role.HasFlag(NameRole.Surname))
+                {
+                    int total = item.FirstCount + item.SurnameCount;
+                    if (total >= 10)
+                    {
+                        int dominant = Math.Max(item.FirstCount, item.SurnameCount);
+                        float ratio = total == 0 ? 0 : (float)dominant / total;
+                        if (ratio >= 0.95f)
+                        {
+                            item.Role = item.FirstCount >= item.SurnameCount ? NameRole.First : NameRole.Surname;
+                        }
+                    }
+                }
+            }
+
+            // Stats
+            int firstOnly = combined.Values.Count(v => v.Role == NameRole.First);
+            int surnameOnly = combined.Values.Count(v => v.Role == NameRole.Surname);
+            int both = combined.Values.Count(v => v.Role.HasFlag(NameRole.First) && v.Role.HasFlag(NameRole.Surname));
+            Console.WriteLine("Final combined index composition:");
+            Console.WriteLine($"  - First names only: {firstOnly}");
+            Console.WriteLine($"  - Surnames only:   {surnameOnly}");
+            Console.WriteLine($"  - Both:            {both}");
             
             // Generate JSON file
-            GenerateJsonFile(nameEntries, jsonOutputPath);
+            GenerateJsonFileFromCombined(combined, jsonOutputPath);
             Console.WriteLine($"Generated JSON file: {jsonOutputPath}");
             
             // Build BK tree index
@@ -86,6 +185,134 @@ class Program
         SaveDebugInfo(maleNames, femaleNames);
         
         return ProcessNames(maleNames, femaleNames);
+    }
+
+    private sealed class FirstNamesParseResult
+    {
+        public List<ProcessedNameEntry> Entries { get; set; } = new();
+        public Dictionary<string, int> IndexKeyToCount { get; set; } = new();
+    }
+
+    static FirstNamesParseResult ParseFirstNamesWithCounts(string excelPath)
+    {
+        var maleNames = new Dictionary<string, int>();
+        var femaleNames = new Dictionary<string, int>();
+
+        using var stream = File.Open(excelPath, FileMode.Open, FileAccess.Read);
+        using var reader = ExcelReaderFactory.CreateReader(stream);
+        var dataSet = reader.AsDataSet();
+
+        if (dataSet.Tables.Count > 0)
+        {
+            ParseWorksheet(dataSet.Tables[0], maleNames, "Male names");
+        }
+        if (dataSet.Tables.Count > 1)
+        {
+            ParseWorksheet(dataSet.Tables[1], femaleNames, "Female names");
+        }
+
+        var entries = ProcessNames(maleNames, femaleNames);
+
+        // Build counts by index key (sum of male+female occurrences) using normalization used for index
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var kv in maleNames)
+        {
+            var idx = CreateIndexKey(kv.Key);
+            if (string.IsNullOrEmpty(idx)) continue;
+            counts[idx] = counts.TryGetValue(idx, out var c) ? c + kv.Value : kv.Value;
+        }
+        foreach (var kv in femaleNames)
+        {
+            var idx = CreateIndexKey(kv.Key);
+            if (string.IsNullOrEmpty(idx)) continue;
+            counts[idx] = counts.TryGetValue(idx, out var c) ? c + kv.Value : kv.Value;
+        }
+
+        return new FirstNamesParseResult
+        {
+            Entries = entries,
+            IndexKeyToCount = counts
+        };
+    }
+
+    static HashSet<string> ParseSurnamesExcelFile(string excelPath)
+    {
+        var surnameIndexKeys = new HashSet<string>(StringComparer.Ordinal);
+
+        using var stream = File.Open(excelPath, FileMode.Open, FileAccess.Read);
+        using var reader = ExcelReaderFactory.CreateReader(stream);
+        var dataSet = reader.AsDataSet();
+
+        // Iterate all sheets (specified as 5 total)
+        for (int t = 0; t < dataSet.Tables.Count; t++)
+        {
+            var table = dataSet.Tables[t];
+            Console.WriteLine($"Processing Surnames worksheet {t + 1}/{dataSet.Tables.Count} with {table.Rows.Count} rows...");
+
+            // Data starts on row 2 (1-based), so index 1 in 0-based
+            for (int i = 1; i < table.Rows.Count; i++)
+            {
+                var row = table.Rows[i];
+                if (row == null || row.ItemArray.Length == 0) continue;
+
+                // Column A = index 0
+                var value = row[0]?.ToString()?.Trim();
+                if (string.IsNullOrWhiteSpace(value)) continue;
+
+                // Create normalized index key: RemoveDiacritics + lowercase + trim
+                var indexKey = CreateIndexKey(value);
+                if (string.IsNullOrEmpty(indexKey)) continue;
+
+                surnameIndexKeys.Add(indexKey);
+            }
+        }
+
+        return surnameIndexKeys;
+    }
+
+    static Dictionary<string, int> ParseSurnameCounts(string excelPath)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        using var stream = File.Open(excelPath, FileMode.Open, FileAccess.Read);
+        using var reader = ExcelReaderFactory.CreateReader(stream);
+        var dataSet = reader.AsDataSet();
+
+        for (int t = 0; t < dataSet.Tables.Count; t++)
+        {
+            var table = dataSet.Tables[t];
+            for (int i = 1; i < table.Rows.Count; i++)
+            {
+                var row = table.Rows[i];
+                if (row == null || row.ItemArray.Length == 0) continue;
+                var value = row[0]?.ToString()?.Trim();
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                var idx = CreateIndexKey(value);
+                if (string.IsNullOrEmpty(idx)) continue;
+                counts[idx] = counts.TryGetValue(idx, out var c) ? c + 1 : 1;
+            }
+        }
+        return counts;
+    }
+
+    static IEnumerable<string> ParseSurnamesOriginals(string excelPath)
+    {
+        using var stream = File.Open(excelPath, FileMode.Open, FileAccess.Read);
+        using var reader = ExcelReaderFactory.CreateReader(stream);
+        var dataSet = reader.AsDataSet();
+
+        for (int t = 0; t < dataSet.Tables.Count; t++)
+        {
+            var table = dataSet.Tables[t];
+
+            for (int i = 1; i < table.Rows.Count; i++)
+            {
+                var row = table.Rows[i];
+                if (row == null || row.ItemArray.Length == 0) continue;
+                var value = row[0]?.ToString()?.Trim();
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                yield return value;
+            }
+        }
     }
     
     static void ParseWorksheet(DataTable table, Dictionary<string, int> nameDict, string sheetType)
@@ -289,7 +516,8 @@ class Program
     {
         var jsonEntries = nameEntries.Select(entry => new {
             name = entry.Name,
-            gender = ConvertGenderToJson(entry.Gender)
+            gender = ConvertGenderToJson(entry.Gender),
+            role = entry.Role
         }).ToList();
         
         var options = new JsonSerializerOptions
@@ -298,6 +526,24 @@ class Program
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };
         
+        string json = JsonSerializer.Serialize(jsonEntries, options);
+        File.WriteAllText(outputPath, json);
+    }
+
+    static void GenerateJsonFileFromCombined(Dictionary<string, CombinedItem> combined, string outputPath)
+    {
+        var jsonEntries = combined.Values.Select(v => new {
+            name = v.DisplayName,
+            gender = ConvertGenderToJson(v.Gender),
+            role = v.Role
+        }).ToList();
+
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
+
         string json = JsonSerializer.Serialize(jsonEntries, options);
         File.WriteAllText(outputPath, json);
     }
@@ -351,7 +597,7 @@ class Program
         var testQueries = new[] { 
             "Alex", "alex", "ALEX",  // The requested search
             "Alexa", "Alexandra", "Alexander",  // Related names
-            "Jiří", "Jiri", "jiri", "jyri"  // Test the fixed problematic name
+            "Jiří", "Jiri", "jiri", "jyri", "kahleova"  // Test the fixed problematic name
         };
         
         Console.WriteLine("=== SEARCH DEMONSTRATION ===\n");
@@ -374,10 +620,10 @@ class Program
         
         if (exactResults.Count > 0)
         {
-            Console.WriteLine($"  ✅ {exactResults.Count} exact match(es) found ({stopwatch.ElapsedMilliseconds} ms):");
+            Console.WriteLine($"  ✅ {exactResults.Count} exact match(es) found ({stopwatch.Elapsed} ms):");
             foreach (var result in exactResults.Take(5))
             {
-                Console.WriteLine($"     → {result.Name} ({result.Gender})");
+                Console.WriteLine($"     → {result.Name} ({result.Gender}, {FormatRole(result.Role)})");
             }
             if (exactResults.Count > 5)
             {
@@ -393,10 +639,10 @@ class Program
             
             if (fuzzyResults.Count > 0)
             {
-                Console.WriteLine($"  🔍 {fuzzyResults.Count} fuzzy match(es) found ({stopwatch.ElapsedMilliseconds} ms):");
+                Console.WriteLine($"  🔍 {fuzzyResults.Count} fuzzy match(es) found ({stopwatch.Elapsed} ms):");
                 foreach (var result in fuzzyResults.Take(3))
                 {
-                    Console.WriteLine($"     → {result.Name} ({result.Gender})");
+                    Console.WriteLine($"     → {result.Name} ({result.Gender}, {FormatRole(result.Role)})");
                 }
                 if (fuzzyResults.Count > 3)
                 {
@@ -405,12 +651,21 @@ class Program
             }
             else
             {
-                Console.WriteLine($"  ❌ No matches found ({stopwatch.ElapsedMilliseconds} ms)");
+                Console.WriteLine($"  ❌ No matches found ({stopwatch.Elapsed} ms)");
             }
         }
         Console.WriteLine();
     }
     
+    static string FormatRole(NameRole role)
+    {
+        bool isFirst = role.HasFlag(NameRole.First);
+        bool isSurname = role.HasFlag(NameRole.Surname);
+        if (isFirst && isSurname) return "Both";
+        if (isFirst) return "First";
+        if (isSurname) return "Surname";
+        return "Unknown";
+    }
     static void DemonstrateUsage(string indexPath)
     {
         Console.WriteLine("\n--- Demonstrating name search ---");
@@ -437,11 +692,23 @@ public class ProcessedNameEntry
     public string Name { get; }
     public string IndexKey { get; }
     public GenderInfo Gender { get; }
+    public NameRole Role { get; }
     
-    public ProcessedNameEntry(string name, string indexKey, GenderInfo gender)
+    public ProcessedNameEntry(string name, string indexKey, GenderInfo gender, NameRole role = NameRole.First)
     {
         Name = name;
         IndexKey = indexKey;
         Gender = gender;
+        Role = role;
     }
+}
+
+class CombinedItem
+{
+    public string DisplayName { get; set; } = string.Empty; // diacritics-preserved display name
+    public string IndexKey { get; set; } = string.Empty;    // normalized key
+    public GenderInfo Gender { get; set; } = new SimpleGender(SimpleGender.GenderType.Unknown);
+    public NameRole Role { get; set; } = NameRole.First;
+    public int FirstCount { get; set; }
+    public int SurnameCount { get; set; }
 }

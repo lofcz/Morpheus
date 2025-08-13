@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.IO;
+using System.Reflection;
 
 namespace Morpheus;
 
@@ -98,6 +100,46 @@ public sealed class DeclensionResult
 
 public static class Declension
 {
+    // Lazy-loaded BK index for name roles (First/Surname/Both)
+    private static readonly Lazy<NameSearcher?> NameSearcherLazy = new Lazy<NameSearcher?>(InitializeNameSearcher, isThreadSafe: true);
+
+    private static NameSearcher? InitializeNameSearcher()
+    {
+        try
+        {
+            var assembly = Assembly.GetExecutingAssembly();
+            var assemblyDir = Path.GetDirectoryName(assembly.Location) ?? AppContext.BaseDirectory;
+            var indexPath = Path.Combine(assemblyDir, "Data", "names_index.bk");
+            if (!File.Exists(indexPath))
+            {
+                return null;
+            }
+            return new NameSearcher(indexPath);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static TokenRole ResolveRoleFromIndex(string token)
+    {
+        var searcher = NameSearcherLazy.Value;
+        if (searcher == null) return TokenRole.Unknown;
+
+        // Exact match only to avoid false positives
+        var results = searcher.Search(token, 0);
+        if (results == null || results.Count == 0) return TokenRole.Unknown;
+
+        // Take the first result (index ensures unique per key) and map its role
+        var role = results[0].Role;
+        bool isFirst = role.HasFlag(NameRole.First);
+        bool isSurname = role.HasFlag(NameRole.Surname);
+        if (isFirst && !isSurname) return TokenRole.FirstName;
+        if (isSurname && !isFirst) return TokenRole.LastName;
+        // If both or none, keep unknown to be refined later
+        return TokenRole.Unknown;
+    }
     // Comprehensive Czech titles and their properties
     private static readonly Dictionary<string, TitleInfo> KnownTitles = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -392,6 +434,21 @@ public static class Declension
             nameTokens.Add(nameToken);
         }
         
+		// If there are any unknown name tokens, don't trust partial first/last detections from DetermineTokenRole
+		var nameCategoryTokens = nameTokens.Where(t => t.Role is TokenRole.FirstName or TokenRole.LastName or TokenRole.Unknown).ToList();
+		bool hasUnknowns = nameCategoryTokens.Any(t => t.Role == TokenRole.Unknown);
+		bool hasDeterminedNames = nameCategoryTokens.Any(t => t.Role is TokenRole.FirstName or TokenRole.LastName);
+		if (hasUnknowns && hasDeterminedNames)
+		{
+			foreach (var t in nameCategoryTokens)
+			{
+				if (t.Role is TokenRole.FirstName or TokenRole.LastName)
+				{
+					t.Role = TokenRole.Unknown;
+				}
+			}
+		}
+        
         // Post-process to handle multi-token patterns (like "s. r. o.")
         ProcessMultiTokenPatterns(nameTokens);
         
@@ -503,22 +560,29 @@ public static class Declension
         {
             return TokenRole.CompanySpecifier;
         }
-        
-        // 6. Check lookup data for firstname/lastname 
-        // TODO: Fix generation and re-enable
-        /*
-        if (Data.ScrapedDeclensionData.FirstNames.Contains(normalized) ||
-            Data.ScrapedDeclensionData.FirstNames.Contains(Normalizer.RemoveDiacritics(normalized)))
+
+        // 6. Consult BK index for an exact role decision
+        var indexRole = ResolveRoleFromIndex(token.Original);
+        if (indexRole != TokenRole.Unknown)
+        {
+            return indexRole;
+        }
+
+        bool couldBeFirstName = Data.ScrapedDeclensionData.FirstNames.Contains(normalized) ||
+                                Data.ScrapedDeclensionData.FirstNames.Contains(Normalizer.RemoveDiacritics(normalized));
+
+        bool couldBeLastName = Data.ScrapedDeclensionData.LastNames.Contains(normalized) ||
+                                Data.ScrapedDeclensionData.LastNames.Contains(Normalizer.RemoveDiacritics(normalized));
+
+        /*if (couldBeFirstName && !couldBeLastName)
         {
             return TokenRole.FirstName;
         }
-        
-        if (Data.ScrapedDeclensionData.LastNames.Contains(normalized) ||
-            Data.ScrapedDeclensionData.LastNames.Contains(Normalizer.RemoveDiacritics(normalized)))
+
+        if (couldBeLastName && !couldBeFirstName)
         {
             return TokenRole.LastName;
-        }
-        */
+        }*/
         
         // 7. Default - will be refined later
         return TokenRole.Unknown;
@@ -531,36 +595,51 @@ public static class Declension
                                           t.Role == TokenRole.Unknown).ToList();
         
         if (nameTokens.Count == 0) return;
-        
-        // Simple heuristic for now: 
-        // - Last unknown/name token is likely surname
-        // - Everything else is likely firstname
-        var lastNameToken = nameTokens.LastOrDefault(t => t.Role == TokenRole.Unknown || 
-                                                         t.Role == TokenRole.FirstName || 
-                                                         t.Role == TokenRole.LastName);
-        
-        foreach (var token in nameTokens)
-        {
-            if (token.Role == TokenRole.Unknown)
+		
+		// If at least one first name is already detected, treat all unknown tokens as last names
+		if (nameTokens.Any(t => t.Role == TokenRole.FirstName))
+		{
+			foreach (var token in nameTokens)
+			{
+				if (token.Role == TokenRole.Unknown)
+				{
+					token.Role = TokenRole.LastName;
+				}
+			}
+			return;
+		}
+		
+		// Simple heuristic fallback: 
+		// - Last unknown/name token is likely surname
+		// - Everything else is likely firstname
+		var lastNameToken = nameTokens.LastOrDefault(t => t.Role == TokenRole.Unknown || 
+														 t.Role == TokenRole.FirstName || 
+														 t.Role == TokenRole.LastName);
+		
+		foreach (var token in nameTokens)
+		{
+			if (token.Role == TokenRole.Unknown)
             {
-                if (token == lastNameToken && nameTokens.Count > 1)
-                {
-                    // Use morphological rules to verify if this could be a surname
-                    if (CouldBeSurname(token.Normalized))
-                    {
-                        token.Role = TokenRole.LastName;
-                    }
-                    else
-                    {
-                        token.Role = TokenRole.FirstName;
-                    }
-                }
-                else
-                {
-                    token.Role = TokenRole.FirstName;
-                }
-            }
-        }
+                // continue;
+                
+				if (token == lastNameToken && nameTokens.Count > 1)
+				{
+					// Use morphological rules to verify if this could be a surname
+					if (CouldBeSurname(token.Normalized))
+					{
+						token.Role = TokenRole.LastName;
+					}
+					else
+					{
+						token.Role = TokenRole.FirstName;
+					}
+				}
+				else
+				{
+					token.Role = TokenRole.FirstName;
+				}
+			}
+		}
     }
 
     private static bool IsSpecialization(string normalized)
@@ -960,6 +1039,7 @@ public static class Declension
         
         // Special case: nepřechýlená příjmení (uninflected surnames)
         // If we have a feminine person with a masculine surname, the surname should remain unchanged
+        // but we should try to restore proper diacritics
         if (isLastName && gender == DetectedGender.Feminine)
         {
             // Check if this surname has a masculine form in our data
@@ -970,11 +1050,13 @@ public static class Declension
                 var feminineSurnameResult = TryPrebuiltLookup(token.Original, @case, DetectedGender.Feminine, entityType, isLastName);
                 
                 // If there's no specific feminine form or the feminine form is the same as nominative,
-                // use the original surname (nepřechýlené příjmení)
+                // use the original surname (nepřechýlené příjmení) but with diacritic restoration
                 if (string.IsNullOrEmpty(feminineSurnameResult) || 
                     feminineSurnameResult == token.Original)
                 {
-                    return MatchCasing(token.Original, token.Original); // Keep surname unchanged for nepřechýlená příjmení but apply proper casing
+                    // Apply diacritic restoration for nepřechýlená příjmení
+                    var restoredSurname = Rules.VokativRulesFromPython.TransformFeminineLastName(token.Original);
+                    return MatchCasing(token.Original, restoredSurname);
                 }
                 
                 // Otherwise use the specific feminine form

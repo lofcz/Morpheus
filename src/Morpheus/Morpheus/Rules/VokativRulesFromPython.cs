@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Morpheus.Rules;
 
@@ -1231,6 +1232,7 @@ public static class VokativRulesFromPython
 
     /// <summary>
     /// Transform a masculine name to vocative using the Python vokativ rules
+    /// with Czech phonological rule correction for r/ř alternation
     /// </summary>
     public static string TransformMasculineVocative(string name)
     {
@@ -1238,6 +1240,9 @@ public static class VokativRulesFromPython
         
         var normalizedName = name.ToLowerInvariant();
         var (suffix, replacement) = GetMatchingSuffix(normalizedName, MasculineVocativeRules);
+        
+        // Apply Czech phonological rule: consonant + r → ř, vowel + r → r
+        replacement = ApplyCzechRAlternationRule(normalizedName, suffix, replacement);
         
         // Remove the matched suffix and add the replacement
         var stem = normalizedName.Substring(0, normalizedName.Length - suffix.Length);
@@ -1274,13 +1279,60 @@ public static class VokativRulesFromPython
     /// <summary>
     /// Transform a feminine last name to vocative using the Python vokativ rules
     /// Simple rule: feminine surnames remain unchanged (nepřechýlená příjmení)
+    /// But we should try to restore proper diacritics for Czech surnames
     /// </summary>
     public static string TransformFeminineLastName(string name)
     {
         if (string.IsNullOrEmpty(name)) return name;
         
-        // For feminine surnames, return unchanged but with proper casing
-        return ApplyCasing(name, name.ToLowerInvariant());
+        // For feminine surnames, apply diacritic restoration for common patterns
+        var result = RestoreFeminineSurnameDiacritics(name);
+        
+        // Apply proper casing
+        return ApplyCasing(name, result);
+    }
+
+    /// <summary>
+    /// Restore diacritics for feminine surnames based on suffix rules
+    /// Only restore diacritics if the input doesn't already contain them
+    /// </summary>
+    public static string RestoreFeminineSurnameDiacritics(string name)
+    {
+        var normalized = name.ToLowerInvariant();
+        
+        // If the name already contains diacritics, don't change it
+        // The user input with diacritics is likely the correct form
+        if (ContainsDiacritics(name))
+        {
+            return normalized;
+        }
+        
+        // Only restore diacritics for names without any diacritics
+        // Simple suffix-based rules for common Czech feminine surname endings
+        if (normalized.EndsWith("va"))
+        {
+            return normalized.Substring(0, normalized.Length - 2) + "vá";
+        }
+        else if (normalized.EndsWith("ka"))
+        {
+            return normalized.Substring(0, normalized.Length - 2) + "ká";
+        }
+        else if (normalized.EndsWith("na"))
+        {
+            return normalized.Substring(0, normalized.Length - 2) + "ná";
+        }
+        
+        // If no pattern matches, return as-is
+        return normalized;
+    }
+
+    /// <summary>
+    /// Check if a string contains Czech diacritics
+    /// </summary>
+    private static bool ContainsDiacritics(string text)
+    {
+        // Czech diacritics: á, č, ď, é, ě, í, ň, ó, ř, š, ť, ú, ů, ý, ž
+        return text.Any(c => "áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ".Contains(c));
     }
 
     /// <summary>
@@ -1312,6 +1364,58 @@ public static class VokativRulesFromPython
         var (_, nameType) = GetMatchingSuffix(normalizedName, WomanNameTypeRules);
         
         return nameType == "l"; // 'l' means last name, 'f' means first name
+    }
+
+    /// <summary>
+    /// Apply Czech phonological rule for r/ř alternation
+    /// Rule: consonant + r → ř, vowel + r → r (no alternation)
+    /// </summary>
+    private static string ApplyCzechRAlternationRule(string word, string matchedSuffix, string replacement)
+    {
+        // Only apply to replacements ending in 're' or 'ře'
+        if (!replacement.EndsWith("re") && !replacement.EndsWith("ře"))
+            return replacement;
+
+        // Check if the matched suffix ends in 'r'
+        if (!matchedSuffix.EndsWith("r"))
+            return replacement;
+
+        // Find the character immediately before 'r' in the matched suffix within the original word
+        var suffixStartPosition = word.Length - matchedSuffix.Length;
+        var rPositionInSuffix = matchedSuffix.LastIndexOf('r');
+        var rPositionInWord = suffixStartPosition + rPositionInSuffix;
+        
+        // Check if there's a character before the 'r' in the original word
+        if (rPositionInWord <= 0)
+            return replacement; // r is at the beginning, use default
+
+        // Get the character immediately before 'r' in the original word
+        var charBeforeR = word[rPositionInWord - 1];
+
+        // Check if it's a consonant or vowel
+        bool isVowel = "aeiouyáéěíóúůý".Contains(charBeforeR);
+
+        // Heuristic: treat vowel + 'j' before 'r' as a vowel environment (diphthong), e.g., Štejr → Štejre
+        // If the character before 'r' is 'j' and the character before 'j' is a vowel, prefer 're'
+        if (!isVowel && charBeforeR == 'j' && rPositionInWord - 1 > 0)
+        {
+            var charBeforeJ = word[rPositionInWord - 2];
+            if ("aeiouyáéěíóúůý".Contains(charBeforeJ))
+            {
+                isVowel = true;
+            }
+        }
+
+        if (isVowel)
+        {
+            // Vowel + r → no alternation, should end in 're'
+            return replacement.EndsWith("ře") ? replacement.Replace("ře", "re") : replacement;
+        }
+        else
+        {
+            // Consonant + r → alternation, should end in 'ře'
+            return replacement.EndsWith("re") ? replacement.Replace("re", "ře") : replacement;
+        }
     }
 
     /// <summary>

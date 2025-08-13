@@ -22,6 +22,9 @@
       <None Update="jmena.xls">
         <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       </None>
+      <None Update="prijmeni.xls">
+        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      </None>
     </ItemGroup>
 
 </Project>

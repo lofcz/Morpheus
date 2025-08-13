@@ -4,6 +4,14 @@ using System.Text.Json.Serialization;
 
 namespace Morpheus;
 
+[Flags]
+public enum NameRole
+{
+    None = 0,
+    First = 1,
+    Surname = 2
+}
+
 public static class Levenshtein
 {
     public static int Distance(string value1, string value2)
@@ -143,14 +151,16 @@ internal class BKTree
             // Use a prefix to distinguish between gender types in the file
             if (gender is SimpleGender sg)
             {
-                line = $"{sg.TypeIdentifier},{node.Data.Name},{(int)sg.Type}";
+                // Persist role as the last field for simple gender
+                line = $"{sg.TypeIdentifier},{node.Data.Name},{(int)sg.Type},{(int)node.Data.Role}";
             }
             else if (gender is AndrogyneGender ag)
             {
                 // Use InvariantCulture to ensure '.' is the decimal separator
                 var maleRatioStr = ag.MaleRatio?.ToString(CultureInfo.InvariantCulture) ?? "";
                 var femaleRatioStr = ag.FemaleRatio?.ToString(CultureInfo.InvariantCulture) ?? "";
-                line = $"{ag.TypeIdentifier},{node.Data.Name},{maleRatioStr},{femaleRatioStr}";
+                // Persist role as the last field for androgyne
+                line = $"{ag.TypeIdentifier},{node.Data.Name},{maleRatioStr},{femaleRatioStr},{(int)node.Data.Role}";
             }
             else
             {
@@ -179,10 +189,16 @@ internal class BKTree
             string typeId = parts[0];
             string name = parts[1];
             GenderInfo genderInfo = null;
+            NameRole role = NameRole.First; // default for backward compatibility
 
             if (typeId == "S" && parts.Length >= 3 && int.TryParse(parts[2], out var genderInt))
             {
                 genderInfo = new SimpleGender((SimpleGender.GenderType)genderInt);
+                // Optional 4th part with role
+                if (parts.Length >= 4 && int.TryParse(parts[3], out var roleInt))
+                {
+                    role = (NameRole)roleInt;
+                }
             }
             else if (typeId == "A" && parts.Length >= 4)
             {
@@ -190,13 +206,18 @@ internal class BKTree
                 float? maleRatio = float.TryParse(parts[2], NumberStyles.Any, CultureInfo.InvariantCulture, out var mr) ? mr : (float?)null;
                 float? femaleRatio = float.TryParse(parts[3], NumberStyles.Any, CultureInfo.InvariantCulture, out var fr) ? fr : (float?)null;
                 genderInfo = new AndrogyneGender(maleRatio, femaleRatio);
+                // Optional 5th part with role
+                if (parts.Length >= 5 && int.TryParse(parts[4], out var roleInt))
+                {
+                    role = (NameRole)roleInt;
+                }
             }
 
             if (genderInfo != null)
             {
                 // Create index key for search purposes
                 string indexKey = Normalizer.RemoveDiacritics(name).ToLowerInvariant().Trim();
-                tree.Add(new NameEntry(name, indexKey, genderInfo));
+                tree.Add(new NameEntry(name, indexKey, genderInfo, role));
             }
         }
         return tree;
@@ -218,7 +239,7 @@ public static class BKTreeBuilder
         {
             // The Gender property is now a GenderInfo object thanks to the converter
             string indexKey = Normalizer.RemoveDiacritics(jsonEntry.Name).ToLowerInvariant().Trim();
-            var entry = new NameEntry(jsonEntry.Name, indexKey, jsonEntry.Gender);
+            var entry = new NameEntry(jsonEntry.Name, indexKey, jsonEntry.Gender, jsonEntry.Role);
             tree.Add(entry);
         }
 
@@ -319,12 +340,14 @@ public readonly struct NameEntry
     public string Name { get; }        // Display name with proper formatting
     public string IndexKey { get; }    // Search key: lowercase, no diacritics
     public GenderInfo Gender { get; }
+    public NameRole Role { get; }
 
-    public NameEntry(string name, string indexKey, GenderInfo gender)
+    public NameEntry(string name, string indexKey, GenderInfo gender, NameRole role = NameRole.First)
     {
         Name = name;
         IndexKey = indexKey;
         Gender = gender;
+        Role = role;
     }
 
     public override string ToString()
@@ -346,6 +369,9 @@ internal class JsonNameEntry
 
     [JsonPropertyName("gender")]
     public GenderInfo Gender { get; set; }
+
+    [JsonPropertyName("role")]
+    public NameRole Role { get; set; }
 }
 
 /// <summary>

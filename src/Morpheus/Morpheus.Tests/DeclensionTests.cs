@@ -1,4 +1,5 @@
 using System.Data;
+using System.Linq;
 using System.Text;
 using ExcelDataReader;
 
@@ -9,7 +10,7 @@ public class DeclensionTests
     [Test]
     public void Decline_Hana_Skalicka_AllowsTitlesOmissionAndDetectsFemale()
     {
-        var tt = "Jana Novák";
+        var tt = "Liška Michal";
         var xx = Declension.Decline(tt, CzechCase.Vocative, new DeclensionOptions { OmitTitles = false });
         
         var input = "Hana Skalická";
@@ -65,13 +66,18 @@ public class DeclensionTests
         foreach (var (input, czechCase, expected) in testCases)
         {
             var result = Morpheus.Declension.Decline(input, czechCase);
-            if (result.Output == expected)
+            var acceptableOutputs = ParseAcceptableOutputs(expected);
+            
+            if (acceptableOutputs.Contains(result.Output))
             {
                 passed++;
             }
             else
             {
-                failures.Add($"{input} → Expected: '{expected}', Got: '{result.Output}'");
+                var expectedDisplay = acceptableOutputs.Count > 1 
+                    ? $"one of [{string.Join(", ", acceptableOutputs.Select(o => $"'{o}'"))}]"
+                    : $"'{expected}'";
+				failures.Add($"{input} → Expected: {expectedDisplay}, Got: '{result.Output}' ({DisplayGender(result.Gender)})");
             }
         }
         
@@ -94,6 +100,16 @@ public class DeclensionTests
             // Just throw a simple exception without Assert framework overhead
             throw new Exception($"{failures.Count} test failures found. Success rate: {successRate:P1}. See console output above for details.");
         }
+    }
+    
+    static string DisplayGender(DetectedGender gender)
+    {
+        return gender switch
+        {
+            DetectedGender.Masculine => "MALE",
+            DetectedGender.Feminine => "FEMALE",
+            _ => "ANDROGENOUS"
+        };
     }
 
     private static IEnumerable<(string input, CzechCase czechCase, string expected)> LoadTestCasesFromFile(string filename, CzechCase czechCase)
@@ -128,11 +144,63 @@ public class DeclensionTests
         }
     }
 
+    /// <summary>
+    /// Parse acceptable outputs from test data, handling multiple forms
+    /// Supports:
+    /// 1. Bracketed alternatives: "Šnajdrov(a/á)" -> ["Šnajdrova", "Šnajdrová"]
+    /// 2. Slash-separated: "Šnajdrova / Šnajdrová" -> ["Šnajdrova", "Šnajdrová"]
+    /// 3. Simple form: "Šnajdrova" -> ["Šnajdrova"]
+    /// </summary>
+    private static List<string> ParseAcceptableOutputs(string expected)
+    {
+        var outputs = new List<string>();
+        
+        // Handle bracketed alternatives first: "prefix(option1/option2)suffix"
+        var bracketStart = expected.IndexOf('(');
+        var bracketEnd = expected.IndexOf(')', bracketStart + 1);
+        
+        if (bracketStart >= 0 && bracketEnd > bracketStart)
+        {
+            var prefix = expected.Substring(0, bracketStart);
+            var suffix = expected.Substring(bracketEnd + 1);
+            var options = expected.Substring(bracketStart + 1, bracketEnd - bracketStart - 1);
+            
+            var optionParts = options.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var option in optionParts)
+            {
+                outputs.Add(prefix + option.Trim() + suffix);
+            }
+            return outputs;
+        }
+        
+        // Handle slash-separated alternatives: "form1 / form2" (only if no brackets)
+        if (expected.Contains('/'))
+        {
+            var parts = expected.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+            {
+                outputs.Add(part.Trim());
+            }
+            return outputs;
+        }
+        
+        // Simple form - no alternatives
+        outputs.Add(expected);
+        return outputs;
+    }
+
     private static void AssertDeclension(string input, CzechCase czechCase, string expected)
     {
         var result = Morpheus.Declension.Decline(input, czechCase);
-        Assert.That(result.Output, Is.EqualTo(expected), 
-            $"Failed for input '{input}' in case {czechCase}. Expected '{expected}', got '{result.Output}'");
+        var acceptableOutputs = ParseAcceptableOutputs(expected);
+        
+        if (!acceptableOutputs.Contains(result.Output))
+        {
+            var expectedDisplay = acceptableOutputs.Count > 1 
+                ? $"one of [{string.Join(", ", acceptableOutputs.Select(o => $"'{o}'"))}]"
+                : $"'{expected}'";
+            Assert.Fail($"Failed for input '{input}' in case {czechCase}. Expected {expectedDisplay}, got '{result.Output}'");
+        }
     }
 
     [Test]
