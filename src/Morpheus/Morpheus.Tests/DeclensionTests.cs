@@ -64,14 +64,14 @@ public class DeclensionTests
         
         foreach (var (input, czechCase, expected) in testCases)
         {
-            try
+            var result = Morpheus.Declension.Decline(input, czechCase);
+            if (result.Output == expected)
             {
-                AssertDeclension(input, czechCase, expected);
                 passed++;
             }
-            catch (AssertionException ex)
+            else
             {
-                failures.Add($"FAIL: {input} → Expected: '{expected}', Got: '{Morpheus.Declension.Decline(input, czechCase).Output}'");
+                failures.Add($"{input} → Expected: '{expected}', Got: '{result.Output}'");
             }
         }
         
@@ -80,22 +80,20 @@ public class DeclensionTests
         
         if (failures.Count > 0)
         {
-            Console.WriteLine("\nFirst 20 failures:");
-            foreach (var failure in failures.Take(20))
+            Console.WriteLine("\nAll failures:");
+            for (int i = 0; i < failures.Count; i++)
             {
-                Console.WriteLine(failure);
-            }
-            
-            if (failures.Count > 20)
-            {
-                Console.WriteLine($"... and {failures.Count - 20} more failures");
+                Console.WriteLine($"  {i + 1}) {failures[i]}");
             }
         }
         
-        // Only fail if success rate is below threshold (e.g., 80%)
-        var successRate = (double)passed / testCases.Count;
-        Assert.That(successRate, Is.GreaterThan(0.8), 
-            $"Success rate {successRate:P1} is below 80% threshold. See console output for details.");
+        // Fail if there are any failures
+        if (failures.Count > 0)
+        {
+            var successRate = (double)passed / testCases.Count;
+            // Just throw a simple exception without Assert framework overhead
+            throw new Exception($"{failures.Count} test failures found. Success rate: {successRate:P1}. See console output above for details.");
+        }
     }
 
     private static IEnumerable<(string input, CzechCase czechCase, string expected)> LoadTestCasesFromFile(string filename, CzechCase czechCase)

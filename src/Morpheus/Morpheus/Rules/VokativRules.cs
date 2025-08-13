@@ -5,8 +5,73 @@ namespace Morpheus.Rules;
 
 public static class VokativRules
 {
-    // # Oslovujeme, voláme.
+    /// <summary>
+    /// Transform a name to vocative case using improved rules from Python vokativ library
+    /// This is a rule-based fallback when prebuilt data lookup fails
+    /// </summary>
     public static string Transform(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return input;
+        
+        // Default behavior when context is not available - use Python gender detection
+        var detectedGender = VokativRulesFromPython.DetectGender(input);
+        
+        if (detectedGender == DetectedGender.Feminine)
+        {
+            // For feminine names, check if it's likely a first name or last name
+            bool isLastName = VokativRulesFromPython.IsFeminineLastName(input);
+            
+            if (isLastName)
+            {
+                // Feminine last names remain unchanged (nepřechýlená příjmení)
+                return VokativRulesFromPython.TransformFeminineLastName(input);
+            }
+            else
+            {
+                // Feminine first names: a → o, otherwise unchanged
+                return VokativRulesFromPython.TransformFeminineFirstName(input);
+            }
+        }
+        else
+        {
+            // Masculine names (or ambiguous) - use the comprehensive masculine rules
+            return VokativRulesFromPython.TransformMasculineVocative(input);
+        }
+    }
+
+    /// <summary>
+    /// Transform a name to vocative case with full context information
+    /// This provides the best accuracy by using known gender and role information
+    /// </summary>
+    public static string TransformWithContext(string input, DetectedGender gender, bool isLastName)
+    {
+        if (string.IsNullOrEmpty(input)) return input;
+        
+        // Use the Python vokativ approach with full context for maximum accuracy
+        if (gender == DetectedGender.Feminine)
+        {
+            if (isLastName)
+            {
+                // Feminine last names remain unchanged (nepřechýlená příjmení)
+                return VokativRulesFromPython.TransformFeminineLastName(input);
+            }
+            else
+            {
+                // Feminine first names: a → o, otherwise unchanged
+                return VokativRulesFromPython.TransformFeminineFirstName(input);
+            }
+        }
+        else
+        {
+            // Masculine names - use the comprehensive masculine rules
+            return VokativRulesFromPython.TransformMasculineVocative(input);
+        }
+    }
+
+    /// <summary>
+    /// Legacy transform method - keeping the original complex rule-based logic as fallback
+    /// </summary>
+    public static string TransformLegacy(string input)
     {
         var output = new List<string>();
         var names = input.Contains(" ") ? input.Split(' ', StringSplitOptions.RemoveEmptyEntries) : new[] { input };

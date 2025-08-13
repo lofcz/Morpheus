@@ -1009,7 +1009,7 @@ public static class Declension
             CzechCase.Genitive => Rules.GenitivRules.Transform(token.Original),
             CzechCase.Dative => Rules.DativRules.Transform(token.Original),
             CzechCase.Accusative => Rules.AkuzativRules.Transform(token.Original),
-            CzechCase.Vocative => Rules.VokativRules.Transform(token.Original),
+            CzechCase.Vocative => Rules.VokativRules.TransformWithContext(token.Original, gender, isLastName),
             CzechCase.Locative => Rules.LokativRules.Transform(token.Original),
             CzechCase.Instrumental => Rules.InstrumentalRules.Transform(token.Original),
             _ => token.Original
