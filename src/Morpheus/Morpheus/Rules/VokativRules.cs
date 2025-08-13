@@ -6,7 +6,6 @@ namespace Morpheus.Rules;
 public static class VokativRules
 {
     // # Oslovujeme, voláme.
-    // Faithful port approach of (5) vokativ/python/vokativ.py — simplified structure but identical branch outcomes
     public static string Transform(string input)
     {
         var output = new List<string>();

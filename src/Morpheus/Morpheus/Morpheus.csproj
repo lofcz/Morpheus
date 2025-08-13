@@ -12,5 +12,10 @@
     <ItemGroup Condition="'$(TargetFramework)'=='netstandard2.0'">
         <Compile Remove="Declension.cs" />
     </ItemGroup>
+    <ItemGroup>
+      <None Update="Data\ScrapedDeclensionData.json">
+        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      </None>
+    </ItemGroup>
 
 </Project>

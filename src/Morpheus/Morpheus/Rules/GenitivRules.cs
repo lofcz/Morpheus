@@ -6,7 +6,6 @@ namespace Morpheus.Rules;
 public static class GenitivRules
 {
     // # Koho, čeho?
-    // Faithful port of (2) genitiv/python/genitiv.py
     public static string Transform(string input)
     {
         var output = new List<string>();

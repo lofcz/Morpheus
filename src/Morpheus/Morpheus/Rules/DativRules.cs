@@ -6,7 +6,6 @@ namespace Morpheus.Rules;
 public static class DativRules
 {
     // # Komu, čemu?
-    // Faithful port of (3) dativ/python/dativ.py
     public static string Transform(string input)
     {
         var output = new List<string>();

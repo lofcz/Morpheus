@@ -6,7 +6,6 @@ namespace Morpheus.Rules;
 public static class InstrumentalRules
 {
     // # S kým, s čím?
-    // Faithful port of (7) instrumental/python/instrumental.py
     public static string Transform(string input)
     {
         var output = new List<string>();

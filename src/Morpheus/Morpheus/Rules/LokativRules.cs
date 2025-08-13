@@ -6,7 +6,6 @@ namespace Morpheus.Rules;
 public static class LokativRules
 {
     // # O kom, o čem?
-    // Faithful port of (6) lokativ/python/lokativ.py
     public static string Transform(string input)
     {
         var output = new List<string>();

@@ -58,6 +58,26 @@ public enum DetectedEntityType
     Invalid
 }
 
+public enum TokenRole
+{
+    Title,
+    FirstName,     // křestní jméno (včetně prostředních jmen)
+    LastName,      // příjmení
+    Specialization, // ml., st., mladší, starší
+    CompanySpecifier, // s.r.o., a.s., etc.
+    Bracket,       // (něco), [něco], {něco}
+    Nickname,      // "něco", 'něco', „něco"
+    Unknown
+}
+
+public class NameToken
+{
+    public string Original { get; set; } = string.Empty;
+    public string Normalized { get; set; } = string.Empty;
+    public TokenRole Role { get; set; } = TokenRole.Unknown;
+    public int Position { get; set; }
+}
+
 public sealed class DeclensionOptions
 {
     public bool OmitFirstName { get; init; }
@@ -294,58 +314,295 @@ public static class Declension
         return normalized;
     }
 
-    // Step 2: Handle titles (detect and temporarily remove)
-    private static ParsedTitles ExtractTitles(string input)
+    // Step 3: Handle titles (detect and temporarily remove) using pre-assigned token roles
+    private static ParsedTitles ExtractTitles(List<NameToken> tokens)
     {
         var result = new ParsedTitles();
-        if (string.IsNullOrWhiteSpace(input)) return result;
+        var namePartTokens = new List<string>();
+        
+        foreach (var token in tokens)
+        {
+            switch (token.Role)
+            {
+                case TokenRole.Title:
+                    var titleInfo = KnownTitles.GetValueOrDefault(token.Original);
+                    if (titleInfo != null)
+                    {
+                        // Check if this title implies gender
+                        if (titleInfo.Gender != TitleGender.Neutral && result.ImpliedGender == null)
+                        {
+                            result.ImpliedGender = titleInfo.Gender == TitleGender.Masculine 
+                                ? DetectedGender.Masculine 
+                                : DetectedGender.Feminine;
+                        }
+                        
+                        // Place title in correct position based on its properties
+                        if (titleInfo.PlacesBefore)
+                        {
+                            result.BeforeTitles.Add(token.Original);
+                        }
+                        else
+                        {
+                            result.AfterTitles.Add(token.Original);
+                        }
+                    }
+                    break;
+                    
+                case TokenRole.FirstName:
+                case TokenRole.LastName:
+                    namePartTokens.Add(token.Original);
+                    break;
+                    
+                case TokenRole.Bracket:
+                case TokenRole.Nickname:
+                    // Skip these for now - could be handled specially later
+                    break;
+                    
+                case TokenRole.Specialization:
+                    // Skip specializations (ml., st.)
+                    break;
+                    
+                case TokenRole.CompanySpecifier:
+                    // Don't add company specifiers to titles - they'll be handled in the declension result
+                    break;
+            }
+        }
+        
+        result.NamePart = string.Join(" ", namePartTokens);
+        return result;
+    }
 
+    private static List<NameToken> AssignTokenRoles(string input)
+    {
         var tokens = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var nameTokens = new List<string>();
+        var nameTokens = new List<NameToken>();
         
         for (int i = 0; i < tokens.Length; i++)
         {
             var token = tokens[i];
-            var foundTitle = FindTitle(token, i, tokens);
-            
-            if (foundTitle != null)
+            var nameToken = new NameToken
             {
-                var titleInfo = KnownTitles[foundTitle];
+                Original = token,
+                Normalized = token.ToLowerInvariant().Trim(),
+                Position = i
+            };
+            
+            // Assign role based on various criteria
+            nameToken.Role = DetermineTokenRole(nameToken, i, tokens);
+            nameTokens.Add(nameToken);
+        }
+        
+        // Post-process to handle multi-token patterns (like "s. r. o.")
+        ProcessMultiTokenPatterns(nameTokens);
+        
+        // Post-process to refine firstname/lastname assignments
+        RefineNameTokenRoles(nameTokens);
+        
+        return nameTokens;
+    }
+
+    private static void ProcessMultiTokenPatterns(List<NameToken> tokens)
+    {
+        // Check for company specifiers using n-grams (sliding window approach)
+        DetectCompanySpecifiers(tokens);
+    }
+
+    private static void DetectCompanySpecifiers(List<NameToken> tokens)
+    {
+        // Define base company patterns (without spaces/dots)
+        var companyBasePatterns = new Dictionary<string, int>
+        {
+            {"sro", 3},      // s.r.o., s. r. o., s r o
+            {"as", 2},       // a.s., a. s., a s
+            {"sp", 2},       // s.p., s. p., s p
+            {"spol", 1},     // spol., spol
+            {"corp", 1},     // corp., corp
+            {"inc", 1},      // inc., inc
+            {"ltd", 1},      // ltd., ltd
+            {"llc", 1}       // llc., llc
+        };
+
+        // Check each possible n-gram position
+        for (int i = 0; i < tokens.Count; i++)
+        {
+            foreach (var pattern in companyBasePatterns)
+            {
+                var basePattern = pattern.Key;
+                var expectedTokens = pattern.Value;
                 
-                // Check if this title implies gender
-                if (titleInfo.Gender != TitleGender.Neutral && result.ImpliedGender == null)
+                if (i + expectedTokens <= tokens.Count)
                 {
-                    result.ImpliedGender = titleInfo.Gender == TitleGender.Masculine 
-                        ? DetectedGender.Masculine 
-                        : DetectedGender.Feminine;
+                    // Extract normalized tokens and remove dots/spaces
+                    var ngram = string.Join("", tokens.Skip(i).Take(expectedTokens)
+                        .Select(t => t.Normalized.Replace(".", "").Replace(" ", "")));
+                    
+                    if (ngram == basePattern)
+                    {
+                        // Mark all tokens in this n-gram as company specifiers
+                        for (int j = i; j < i + expectedTokens; j++)
+                        {
+                            tokens[j].Role = TokenRole.CompanySpecifier;
+                        }
+                        i += expectedTokens - 1; // Skip ahead to avoid overlapping matches
+                        break;
+                    }
                 }
-                
-                // Place title in correct position based on its properties
-                if (titleInfo.PlacesBefore)
+            }
+        }
+
+        // Handle single-character specifiers that are clearly company-related
+        for (int i = 0; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (token.Role == TokenRole.Unknown)
+            {
+                var clean = token.Normalized.Replace(".", "").Replace(" ", "");
+                if (clean == "&" || clean == "and" || clean == "co" || clean == "holding" || clean == "se")
                 {
-                    result.BeforeTitles.Add(foundTitle);
+                    token.Role = TokenRole.CompanySpecifier;
+                }
+            }
+        }
+    }
+
+    private static TokenRole DetermineTokenRole(NameToken token, int position, string[] allTokens)
+    {
+        var normalized = token.Normalized;
+        
+        // 1. Check for titles
+        var foundTitle = FindTitle(token.Original, position, allTokens);
+        if (foundTitle != null)
+        {
+            return TokenRole.Title;
+        }
+        
+        // 2. Check for brackets
+        if (normalized.StartsWith('(') || normalized.StartsWith('[') || normalized.StartsWith('{'))
+        {
+            return TokenRole.Bracket;
+        }
+        
+        // 3. Check for nicknames (quotes and non-standard patterns)
+        if (normalized.StartsWith('"') || normalized.StartsWith('\'') || 
+            normalized.StartsWith('"') || normalized.StartsWith('„') ||
+            normalized.Contains('"') || normalized.Contains('\'') ||
+            normalized.Contains('"') || normalized.Contains('„') ||
+            Regex.IsMatch(normalized, @"[_@#\d]|xXx|^\w+\d+$", RegexOptions.IgnoreCase))
+        {
+            return TokenRole.Nickname;
+        }
+        
+        // 4. Check for specializations
+        if (IsSpecialization(normalized))
+        {
+            return TokenRole.Specialization;
+        }
+        
+        // 5. Check for single-token company specifiers
+        if (IsCompanySpecifier(normalized))
+        {
+            return TokenRole.CompanySpecifier;
+        }
+        
+        // 6. Check lookup data for firstname/lastname 
+        // TODO: Fix generation and re-enable
+        /*
+        if (Data.ScrapedDeclensionData.FirstNames.Contains(normalized) ||
+            Data.ScrapedDeclensionData.FirstNames.Contains(Normalizer.RemoveDiacritics(normalized)))
+        {
+            return TokenRole.FirstName;
+        }
+        
+        if (Data.ScrapedDeclensionData.LastNames.Contains(normalized) ||
+            Data.ScrapedDeclensionData.LastNames.Contains(Normalizer.RemoveDiacritics(normalized)))
+        {
+            return TokenRole.LastName;
+        }
+        */
+        
+        // 7. Default - will be refined later
+        return TokenRole.Unknown;
+    }
+
+    private static void RefineNameTokenRoles(List<NameToken> tokens)
+    {
+        var nameTokens = tokens.Where(t => t.Role == TokenRole.FirstName || 
+                                          t.Role == TokenRole.LastName || 
+                                          t.Role == TokenRole.Unknown).ToList();
+        
+        if (nameTokens.Count == 0) return;
+        
+        // Simple heuristic for now: 
+        // - Last unknown/name token is likely surname
+        // - Everything else is likely firstname
+        var lastNameToken = nameTokens.LastOrDefault(t => t.Role == TokenRole.Unknown || 
+                                                         t.Role == TokenRole.FirstName || 
+                                                         t.Role == TokenRole.LastName);
+        
+        foreach (var token in nameTokens)
+        {
+            if (token.Role == TokenRole.Unknown)
+            {
+                if (token == lastNameToken && nameTokens.Count > 1)
+                {
+                    // Use morphological rules to verify if this could be a surname
+                    if (CouldBeSurname(token.Normalized))
+                    {
+                        token.Role = TokenRole.LastName;
+                    }
+                    else
+                    {
+                        token.Role = TokenRole.FirstName;
+                    }
                 }
                 else
                 {
-                    result.AfterTitles.Add(foundTitle);
-                }
-                
-                // Skip additional tokens if this is a multi-word title
-                if (foundTitle.Contains(' '))
-                {
-                    var titleWords = foundTitle.Split(' ').Length;
-                    i += titleWords - 1; // Skip the additional words
+                    token.Role = TokenRole.FirstName;
                 }
             }
-            else
+        }
+    }
+
+    private static bool IsSpecialization(string normalized)
+    {
+        return normalized is "ml." or "ml" or "st." or "st" or "mladší" or "starší" or "jun." or "jun" or "sr." or "sr";
+    }
+
+    private static bool IsCompanySpecifier(string normalized)
+    {
+        var companyPatterns = new[]
+        {
+            "s.r.o.", "s.r.o", "s. r. o.", "s. r. o", 
+            "a.s.", "a.s", "a. s.", "a. s",
+            "s.p.", "s.p", "s. p.", "s. p", 
+            "spol.", "spol", "se", "holding",
+            "&", "and", "co", "co.", "corp", "corp.", "inc", "inc.", "ltd", "ltd.", "llc", "llc."
+        };
+        return companyPatterns.Contains(normalized);
+    }
+
+    private static bool CouldBeSurname(string normalized)
+    {
+        // Basic morphological rules for Czech surnames
+        // This is a simplified version - could be expanded
+        
+        // Common surname endings
+        var surnameEndings = new[]
+        {
+            "ová", "ský", "ská", "ní", "ec", "ák", "ek", "ík", "an", "el", "ka", "ny"
+        };
+        
+        foreach (var ending in surnameEndings)
+        {
+            if (normalized.EndsWith(ending))
             {
-                // This is a name token
-                nameTokens.Add(token);
+                return true;
             }
         }
         
-        result.NamePart = string.Join(" ", nameTokens);
-        return result;
+        // Check if it follows typical Czech surname patterns
+        // (This could be much more sophisticated)
+        return normalized.Length > 3; // Basic length check
     }
 
     private static string? FindTitle(string token, int position, string[] allTokens)
@@ -441,78 +698,186 @@ public static class Declension
     }
 
     // Step 3: Infer gender using prebuilt data + heuristics
-    private static DetectedGender InferGender(string input)
+    // Step 4: Infer gender from tokens (enhanced with scraped data and token roles)
+    private static DetectedGender InferGender(List<NameToken> tokens)
     {
-        if (string.IsNullOrWhiteSpace(input)) return DetectedGender.Ambiguous;
+        var nameTokens = tokens.Where(t => t.Role == TokenRole.FirstName || t.Role == TokenRole.LastName).ToList();
+        if (nameTokens.Count == 0) return DetectedGender.Ambiguous;
 
-        var words = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length == 0) return DetectedGender.Ambiguous;
+        var firstNameTokens = nameTokens.Where(t => t.Role == TokenRole.FirstName).ToList();
+        var lastNameTokens = nameTokens.Where(t => t.Role == TokenRole.LastName).ToList();
 
-        var firstName = words[0];
-        var lastName = words.Length > 1 ? words[1] : null;
+        // Collect gender evidence from all sources with confidence weights
+        var genderEvidence = new List<GenderEvidence>();
 
-        // Try scraped gender data first (most accurate)
-        var normalizedFirstName = firstName.ToLowerInvariant().Trim();
-        if (Data.ScrapedDeclensionData.Genders.TryGetValue(normalizedFirstName, out var scrapedGender))
+        // 1. Scraped data evidence (highest confidence) - first names only
+        foreach (var token in firstNameTokens)
         {
-            return scrapedGender switch
+            var normalizedWithoutDiacritics = Normalizer.RemoveDiacritics(token.Normalized);
+            
+            if (Data.ScrapedDeclensionData.Names.TryGetValue(normalizedWithoutDiacritics, out var nameData))
             {
-                0 => DetectedGender.Masculine,
-                1 => DetectedGender.Feminine,
-                _ => DetectedGender.Ambiguous
-            };
-        }
-
-        // Fallback: use generated dataset for first names
-        var firstCandidates = new List<string> { firstName };
-        if (firstName.Contains('-')) 
-            firstCandidates.AddRange(firstName.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-
-        foreach (var cand in firstCandidates)
-        {
-            if (Morpheus.Data.NameGenderData.Names.TryGetValue(cand, out var g))
-            {
-                if (g == Morpheus.Data.NameGenderData.NameGender.Female) return DetectedGender.Feminine;
-                if (g == Morpheus.Data.NameGenderData.NameGender.Male) return DetectedGender.Masculine;
+                var gender = nameData.Gender switch
+                {
+                    0 => DetectedGender.Masculine,
+                    1 => DetectedGender.Feminine,
+                    _ => DetectedGender.Ambiguous
+                };
+                
+                if (gender != DetectedGender.Ambiguous)
+                {
+                    genderEvidence.Add(new GenderEvidence(gender, 10, $"Scraped data: {token.Original}"));
+                }
             }
         }
 
-        // Surname morphology heuristics
-        if (!string.IsNullOrWhiteSpace(lastName))
+        // 2. Built-in gender data evidence (medium confidence) - first names only
+        foreach (var token in firstNameTokens)
         {
-            if (lastName.EndsWith("ová", StringComparison.OrdinalIgnoreCase)) return DetectedGender.Feminine;
-            if (lastName.EndsWith("á", StringComparison.OrdinalIgnoreCase)) return DetectedGender.Feminine;
+            var candidates = new List<string> { token.Original };
+            if (token.Original.Contains('-'))
+                candidates.AddRange(token.Original.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+            foreach (var cand in candidates)
+            {
+                if (Morpheus.Data.NameGenderData.Names.TryGetValue(cand, out var g))
+                {
+                    var gender = g switch
+                    {
+                        Morpheus.Data.NameGenderData.NameGender.Female => DetectedGender.Feminine,
+                        Morpheus.Data.NameGenderData.NameGender.Male => DetectedGender.Masculine,
+                        _ => DetectedGender.Ambiguous
+                    };
+                    
+                    if (gender != DetectedGender.Ambiguous)
+                    {
+                        genderEvidence.Add(new GenderEvidence(gender, 7, $"Built-in data: {cand}"));
+                    }
+                }
+            }
         }
 
-        return DetectedGender.Ambiguous;
+        // 3. Surname morphology evidence (lower confidence) - last names only
+        foreach (var token in lastNameTokens)
+        {
+            if (token.Original.EndsWith("ová", StringComparison.OrdinalIgnoreCase))
+            {
+                genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 5, $"Surname ending: {token.Original} (-ová)"));
+            }
+            else if (token.Original.EndsWith("á", StringComparison.OrdinalIgnoreCase))
+            {
+                genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 3, $"Surname ending: {token.Original} (-á)"));
+            }
+        }
+
+        // 4. General morphological evidence (all name tokens) - covers adjectives, nouns, titles
+        foreach (var token in nameTokens)
+        {
+            var word = token.Original;
+            
+            // Feminine endings
+            if (word.EndsWith("ová", StringComparison.OrdinalIgnoreCase))
+            {
+                genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 6, $"Feminine ending: {word} (-ová)"));
+            }
+            else if (word.EndsWith("á", StringComparison.OrdinalIgnoreCase))
+            {
+                genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 4, $"Feminine ending: {word} (-á)"));
+            }
+            else if (word.EndsWith("ka", StringComparison.OrdinalIgnoreCase))
+            {
+                genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 3, $"Feminine ending: {word} (-ka)"));
+            }
+            else if (word.EndsWith("ice", StringComparison.OrdinalIgnoreCase))
+            {
+                genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 3, $"Feminine ending: {word} (-ice)"));
+            }
+            else if (word.EndsWith("ese", StringComparison.OrdinalIgnoreCase) || word.EndsWith("esa", StringComparison.OrdinalIgnoreCase))
+            {
+                // e.g., "komtesa" (countess), "princeza" (princess)
+                genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 5, $"Feminine title/noun: {word}"));
+            }
+            // Masculine endings
+            else if (word.EndsWith("ský", StringComparison.OrdinalIgnoreCase) || word.EndsWith("cký", StringComparison.OrdinalIgnoreCase))
+            {
+                genderEvidence.Add(new GenderEvidence(DetectedGender.Masculine, 4, $"Masculine ending: {word} (-ský/-cký)"));
+            }
+            else if (word.EndsWith("ý", StringComparison.OrdinalIgnoreCase) && word.Length > 3)
+            {
+                genderEvidence.Add(new GenderEvidence(DetectedGender.Masculine, 2, $"Masculine ending: {word} (-ý)"));
+            }
+        }
+
+        // 5. Analyze evidence and make decision
+        if (genderEvidence.Count == 0) return DetectedGender.Ambiguous;
+
+        // Group by gender and calculate total confidence scores
+        var masculineScore = genderEvidence.Where(e => e.Gender == DetectedGender.Masculine).Sum(e => e.Confidence);
+        var feminineScore = genderEvidence.Where(e => e.Gender == DetectedGender.Feminine).Sum(e => e.Confidence);
+
+        // Require a minimum confidence difference to avoid ambiguous cases
+        const int minConfidenceDifference = 2;
+        
+        if (Math.Abs(masculineScore - feminineScore) < minConfidenceDifference)
+        {
+            return DetectedGender.Ambiguous;
+        }
+
+        return masculineScore > feminineScore ? DetectedGender.Masculine : DetectedGender.Feminine;
     }
 
-    // Step 4: Infer entity type (name, company, nickname, invalid)
-    private static DetectedEntityType InferEntityType(string input)
-    {
-        if (string.IsNullOrWhiteSpace(input)) return DetectedEntityType.Invalid;
+    private record GenderEvidence(DetectedGender Gender, int Confidence, string Source);
 
-        // Company heuristics
-        var companyPatterns = new[]
+    // Step 5: Infer entity type using token roles
+    private static DetectedEntityType InferEntityType(List<NameToken> tokens)
+    {
+        if (tokens.Count == 0) return DetectedEntityType.Invalid;
+
+        // Check if we have company specifiers
+        if (tokens.Any(t => t.Role == TokenRole.CompanySpecifier))
         {
-            "s\\.\\s*r\\.\\s*o\\.", "a\\.s\\.", "s\\.p\\.", "spol\\.", "\\bSE\\b", "\\bHolding\\b", "&\\s*Co"
-        };
-        foreach (var pat in companyPatterns)
-        {
-            if (Regex.IsMatch(input, pat, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-            {
-                return DetectedEntityType.Company;
-            }
+            return DetectedEntityType.Company;
         }
 
-        // Check if it looks like a proper name
-        if (Regex.IsMatch(input, @"^[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]+(\s+[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]+)*$"))
+        // Check if we have nicknames
+        if (tokens.Any(t => t.Role == TokenRole.Nickname))
+        {
+            return DetectedEntityType.Nickname;
+        }
+
+        // Check if we have valid name tokens (firstname or lastname)
+        var nameTokens = tokens.Where(t => t.Role == TokenRole.FirstName || t.Role == TokenRole.LastName).ToList();
+        if (nameTokens.Count > 0)
         {
             return DetectedEntityType.Name;
         }
 
-        // Everything else could be nickname or invalid
-        return DetectedEntityType.Nickname;
+        // If we only have unknown tokens, try some basic patterns
+        var unknownTokens = tokens.Where(t => t.Role == TokenRole.Unknown).ToList();
+        if (unknownTokens.Count > 0)
+        {
+            var combinedText = string.Join(" ", unknownTokens.Select(t => t.Original));
+            
+            // Company patterns
+            if (Regex.IsMatch(combinedText, @"\b(bank|banka|úvěr|pojišť|holding|group|ltd\.|inc\.|corp\.)", RegexOptions.IgnoreCase))
+            {
+                return DetectedEntityType.Company;
+            }
+
+            // Nickname patterns (non-standard characters, numbers, special symbols)
+            if (Regex.IsMatch(combinedText, @"[_@#\d]|xXx|^\w+\d+$", RegexOptions.IgnoreCase))
+            {
+                return DetectedEntityType.Nickname;
+            }
+
+            // Proper name patterns (standard Czech name structure)
+            if (Regex.IsMatch(combinedText, @"^[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]+(\s+[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]+)*$"))
+            {
+                return DetectedEntityType.Name;
+            }
+        }
+
+        return DetectedEntityType.Invalid;
     }
 
     public static DeclensionResult Decline(string input, CzechCase @case, DeclensionOptions? options = null)
@@ -522,17 +887,20 @@ public static class Declension
         // Step 1: Normalize input
         var normalizedInput = NormalizeInput(input);
 
-        // Step 2: Handle titles (detect and temporarily remove)
-        var parsedTitles = ExtractTitles(normalizedInput);
+        // Step 2: Assign token roles
+        var tokens = AssignTokenRoles(normalizedInput);
 
-        // Step 3: Infer gender (use title-implied gender if available)
-        var detectedGender = parsedTitles.ImpliedGender ?? InferGender(parsedTitles.NamePart);
+        // Step 3: Handle titles (detect and temporarily remove)
+        var parsedTitles = ExtractTitles(tokens);
 
-        // Step 4: Infer entity type
-        var entityType = InferEntityType(parsedTitles.NamePart);
+        // Step 4: Infer gender (use title-implied gender if available)
+        var detectedGender = parsedTitles.ImpliedGender ?? InferGender(tokens);
 
-        // Step 5: Infer the declension result
-        var declinedOutput = InferDeclensionResult(parsedTitles.NamePart, @case, detectedGender, entityType, options);
+        // Step 5: Infer entity type
+        var entityType = InferEntityType(tokens);
+
+        // Step 6: Infer the declension result
+        var declinedOutput = InferDeclensionResult(tokens, @case, detectedGender, entityType, options);
 
         // Reconstruct final output with titles if not omitted
         var finalOutput = ReconstructOutput(parsedTitles, declinedOutput, @case, detectedGender, options);
@@ -554,27 +922,100 @@ public static class Declension
         };
     }
 
-    // Step 5: Infer the declension result
-    private static string InferDeclensionResult(string input, CzechCase @case, DetectedGender gender, DetectedEntityType entityType, DeclensionOptions options)
+    // Step 6: Infer the declension result using pre-assigned token roles
+    private static string InferDeclensionResult(List<NameToken> tokens, CzechCase @case, DetectedGender gender, DetectedEntityType entityType, DeclensionOptions options)
     {
-        if (string.IsNullOrWhiteSpace(input)) return string.Empty;
-        if (entityType == DetectedEntityType.Company) return input; // Companies don't decline
+        if (tokens.Count == 0) return string.Empty;
+        if (entityType == DetectedEntityType.Company) 
+        {
+            // Return all company-related tokens (but not titles)
+            return string.Join(" ", tokens.Where(t => t.Role != TokenRole.Title && 
+                                                     t.Role != TokenRole.Bracket && 
+                                                     t.Role != TokenRole.Nickname).Select(t => t.Original));
+        }
 
-        var words = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var declinedWords = new List<string>();
 
-        for (int i = 0; i < words.Length; i++)
+        foreach (var token in tokens)
         {
-            var word = words[i];
-            bool isFirst = i == 0;
-            bool skip = (isFirst && options.OmitFirstName) || (!isFirst && options.OmitLastName);
+            // Only decline firstname and lastname tokens
+            if (token.Role != TokenRole.FirstName && token.Role != TokenRole.LastName)
+                continue;
+
+            // Apply omit options
+            bool skip = (token.Role == TokenRole.FirstName && options.OmitFirstName) || 
+                       (token.Role == TokenRole.LastName && options.OmitLastName);
             if (skip) continue;
 
-            var declined = DeclineWord(word, @case, gender, entityType, isFirst);
+            var declined = DeclineWordWithRole(token, @case, gender, entityType);
             declinedWords.Add(declined);
         }
 
         return string.Join(" ", declinedWords);
+    }
+
+    private static string DeclineWordWithRole(NameToken token, CzechCase @case, DetectedGender gender, DetectedEntityType entityType)
+    {
+        bool isLastName = token.Role == TokenRole.LastName;
+        
+        // Special case: nepřechýlená příjmení (uninflected surnames)
+        // If we have a feminine person with a masculine surname, the surname should remain unchanged
+        if (isLastName && gender == DetectedGender.Feminine)
+        {
+            // Check if this surname has a masculine form in our data
+            var masculineSurnameResult = TryPrebuiltLookup(token.Original, @case, DetectedGender.Masculine, entityType, isLastName);
+            if (!string.IsNullOrEmpty(masculineSurnameResult))
+            {
+                // Check if there's also a specific feminine form
+                var feminineSurnameResult = TryPrebuiltLookup(token.Original, @case, DetectedGender.Feminine, entityType, isLastName);
+                
+                // If there's no specific feminine form or the feminine form is the same as nominative,
+                // use the original surname (nepřechýlené příjmení)
+                if (string.IsNullOrEmpty(feminineSurnameResult) || 
+                    feminineSurnameResult == token.Original)
+                {
+                    return MatchCasing(token.Original, token.Original); // Keep surname unchanged for nepřechýlená příjmení but apply proper casing
+                }
+                
+                // Otherwise use the specific feminine form
+                return MatchCasing(token.Original, feminineSurnameResult);
+            }
+        }
+        
+        // Try prebuilt lookup first with proper role
+        var prebuiltResult = TryPrebuiltLookup(token.Original, @case, gender, entityType, isLastName);
+        if (!string.IsNullOrEmpty(prebuiltResult))
+        {
+            return MatchCasing(token.Original, prebuiltResult);
+        }
+
+        // Fallback to rule-based declension
+        // For surnames ending in -ova/-ová, treat them as feminine forms
+        if (isLastName && (token.Original.EndsWith("ova", StringComparison.OrdinalIgnoreCase) || 
+                          token.Original.EndsWith("ová", StringComparison.OrdinalIgnoreCase)))
+        {
+            // This is already a feminine surname form, just apply proper casing
+            var result = token.Original;
+            if (result.EndsWith("ova", StringComparison.OrdinalIgnoreCase))
+            {
+                // Convert "ova" to "ová" with proper casing
+                result = result.Substring(0, result.Length - 3) + "ová";
+            }
+            return MatchCasing(token.Original, result);
+        }
+        
+        var ruleResult = @case switch
+        {
+            CzechCase.Genitive => Rules.GenitivRules.Transform(token.Original),
+            CzechCase.Dative => Rules.DativRules.Transform(token.Original),
+            CzechCase.Accusative => Rules.AkuzativRules.Transform(token.Original),
+            CzechCase.Vocative => Rules.VokativRules.Transform(token.Original),
+            CzechCase.Locative => Rules.LokativRules.Transform(token.Original),
+            CzechCase.Instrumental => Rules.InstrumentalRules.Transform(token.Original),
+            _ => token.Original
+        };
+
+        return MatchCasing(token.Original, ruleResult);
     }
 
     private static string ReconstructOutput(ParsedTitles parsedTitles, string declinedContent, CzechCase @case, DetectedGender gender, DeclensionOptions options)
@@ -652,66 +1093,58 @@ public static class Declension
         return salutation; // fallback to original
     }
 
-    private static string DeclineWord(string word, CzechCase @case, DetectedGender gender, DetectedEntityType entityType, bool isFirstWord)
-    {
-        // Try prebuilt lookup first
-        var prebuiltResult = TryPrebuiltLookup(word, @case, gender, entityType, isFirstWord);
-        if (!string.IsNullOrEmpty(prebuiltResult))
-        {
-            return MatchCasing(word, prebuiltResult);
-        }
-
-        // Fallback to rule-based declension
-        var ruleResult = @case switch
-        {
-            CzechCase.Genitive => Rules.GenitivRules.Transform(word),
-            CzechCase.Dative => Rules.DativRules.Transform(word),
-            CzechCase.Accusative => Rules.AkuzativRules.Transform(word),
-            CzechCase.Vocative => Rules.VokativRules.Transform(word),
-            CzechCase.Locative => Rules.LokativRules.Transform(word),
-            CzechCase.Instrumental => Rules.InstrumentalRules.Transform(word),
-            _ => word
-        };
-
-        return MatchCasing(word, ruleResult);
-    }
-    
-    private static string TryPrebuiltLookup(string original, CzechCase @case, DetectedGender gender, DetectedEntityType entityType, bool isFirstWord)
+    private static string TryPrebuiltLookup(string original, CzechCase @case, DetectedGender gender, DetectedEntityType entityType, bool isLastWord)
     {
         var normalizedName = original.ToLowerInvariant().Trim();
+        var caseKey = (int)@case; // Direct cast from CzechCase enum to int
         
-        // Map enums to integers for variant key construction
-        var genderInt = (int)gender;
-        var typeInt = isFirstWord ? 0 : 1; // 0 = FirstName, 1 = LastName
+        // Determine type: 0 = křestní jméno (first/middle), 1 = příjmení (surname)
+        var typeInt = isLastWord ? 1 : 0;
         
-        // Construct variant key: "name_gender_type"
-        var variantKey = $"{normalizedName}_{genderInt}_{typeInt}";
-        
-        // Try to find exact variant match
-        if (Data.ScrapedDeclensionData.Declensions.TryGetValue(variantKey, out var declensions))
-        {
-            var caseKey = (int)@case; // Direct cast from CzechCase enum to int
-            
-            if (declensions.TryGetValue(caseKey, out var form))
-            {
-                return form;
-            }
-        }
+        // Try exact match with inferred gender
+        var result = TryLookupWithGenderAndType(normalizedName, (int)gender, typeInt, caseKey);
+        if (!string.IsNullOrEmpty(result)) return result;
         
         return string.Empty; // Not found in prebuilt data
+    }
+
+    private static string TryLookupWithGenderAndType(string normalizedName, int genderInt, int typeInt, int caseKey)
+    {
+        if (Data.ScrapedDeclensionData.Names.TryGetValue(normalizedName, out var nameData))
+        {
+            // Choose forms based on type: 0 = FirstName, 1 = LastName
+            var forms = typeInt == 0 ? nameData.FirstNameForms : nameData.LastNameForms;
+            
+            foreach (var form in forms)
+            {
+                if (form.Gender == genderInt && caseKey <= form.Cases.Count && !string.IsNullOrEmpty(form.Cases[caseKey - 1])) // subtract 1 as we start from case = 1, but the list is indexed from 0
+                {
+                    return form.Cases[caseKey - 1];
+                }
+            }
+        }
+        return string.Empty;
     }
     
     private static string MatchCasing(string pattern, string value)
     {
         if (string.IsNullOrEmpty(pattern) || string.IsNullOrEmpty(value)) return value;
 
-        // All uppercase
+        // All uppercase pattern
         if (pattern.ToUpperInvariant() == pattern)
         {
             return value.ToUpperInvariant();
         }
 
-        // Title-case (naive): first letter uppercase, rest preserved as-is
+        // Smart capitalization: if pattern is all lowercase (like user typed names),
+        // still capitalize the first letter for proper names
+        if (pattern.ToLowerInvariant() == pattern && char.IsLetter(pattern[0]))
+        {
+            if (value.Length == 1) return value.ToUpperInvariant();
+            return char.ToUpperInvariant(value[0]) + value.Substring(1).ToLowerInvariant();
+        }
+
+        // Title-case (original logic): first letter uppercase, rest preserved as-is
         if (char.IsLetter(pattern[0]) && char.IsUpper(pattern[0]))
         {
             if (value.Length == 1) return value.ToUpperInvariant();
@@ -734,19 +1167,6 @@ public static class Declension
             IsWord = isWord;
             IsTitle = isTitle;
         }
-    }
-
-    private static IReadOnlyList<Token> Tokenize(string input)
-    {
-        var parts = input.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-        var tokens = new List<Token>(parts.Length);
-        foreach (var p in parts)
-        {
-            var isTitle = KnownTitles.ContainsKey(p) || Regex.IsMatch(p, @"^[A-ZÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]\.$");
-            var isWord = !isTitle && Regex.IsMatch(p, @"\p{L}+");
-            tokens.Add(new Token(p, isWord, isTitle));
-        }
-        return tokens;
     }
 }
 

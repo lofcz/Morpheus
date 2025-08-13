@@ -6,7 +6,6 @@ namespace Morpheus.Rules;
 public static class AkuzativRules
 {
     // # Koho, co?
-    // Faithful port of (4) akuzativ/python/akuzativ.py
     public static string Transform(string input)
     {
         var output = new List<string>();

@@ -9,7 +9,7 @@ internal static class Program
 {
     private static readonly Uri BaseUri = new("https://www.sklonovani-jmen.cz/");
 
-        public static async Task Main(string[] args)
+    public static async Task Main(string[] args)
     {
         if (args.Length == 0)
         {
