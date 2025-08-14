@@ -310,6 +310,17 @@ public static class VokativRulesFromPython
         ["oha"] = "oho",
         ["kha"] = "kho",
         ["žel"] = "želi",
+        // Specific r/ř vowel-preference fixes
+        ["egr"] = "egre",
+        ["ivr"] = "ivre",
+        ["ohr"] = "ohre",
+        ["orr"] = "orre",
+        // Polish -iec
+        ["iec"] = "ieci",
+        // Foreign -ay → -ayi
+        ["ay"] = "ayi",
+        // -edel → -edele (Friedel)
+        ["edel"] = "edele",
         ["gr"] = "gře",
         ["tr"] = "tře",
         ["th"] = "the",
@@ -1236,20 +1247,147 @@ public static class VokativRulesFromPython
     /// </summary>
     public static string TransformMasculineVocative(string name)
     {
+        return TransformMasculineVocative(name, isLastName: false);
+    }
+
+    /// <summary>
+    /// Context-aware variant allowing special handling for surnames and movable vowels (narrow heuristics).
+    /// </summary>
+    public static string TransformMasculineVocative(string name, bool isLastName)
+    {
         if (string.IsNullOrEmpty(name)) return name;
-        
         var normalizedName = name.ToLowerInvariant();
-        var (suffix, replacement) = GetMatchingSuffix(normalizedName, MasculineVocativeRules);
-        
-        // Apply Czech phonological rule: consonant + r → ř, vowel + r → r
-        replacement = ApplyCzechRAlternationRule(normalizedName, suffix, replacement);
-        
-        // Remove the matched suffix and add the replacement
+        var (suffix, replacementRaw) = GetMatchingSuffix(normalizedName, MasculineVocativeRules);
+        var replacement = ApplyCzechRAlternationRule(normalizedName, suffix, replacementRaw);
         var stem = normalizedName.Substring(0, normalizedName.Length - suffix.Length);
-        var result = stem + replacement;
-        
-        // Preserve original casing
-        return ApplyCasing(name, result);
+        var provisional = stem + replacement;
+
+        var adjusted = AdjustMovableVowelHeuristics(normalizedName, suffix, replacement, provisional, isLastName);
+        return ApplyCasing(name, adjusted);
+    }
+
+    private static bool IsVowel(char ch) => "aeiouyáéěíóúůý".Contains(ch);
+
+    private static int CountTrailingConsonants(ReadOnlySpan<char> span)
+    {
+        int count = 0;
+        for (int i = span.Length - 1; i >= 0; i--)
+        {
+            if (IsVowel(span[i])) break;
+            count++;
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Heuristics for movable vowels in masculine vocative, especially for surnames.
+    /// - For -ek → ku: keep 'e' (eku) if dropping creates a hard 3-consonant cluster (e.g., Flek → Fleku, Česnek → Česneku)
+    /// - For -el where result removed 'e' (…le): prefer keeping 'e' (…ele) for surnames (e.g., Popel → Popele, Máčel → Máčele)
+    /// - For Czech surnames ending with -ál mapped to -áli by rules, prefer -ále (e.g., Habrnál → Habrnále)
+    /// </summary>
+    private static string AdjustMovableVowelHeuristics(string originalLower, string matchedSuffix, string replacement, string resultLower, bool isLastName)
+    {
+        string adjusted = resultLower;
+
+        // Helper locals
+        bool IsVowel(char ch) => "aeiouyáéěíóúůý".Contains(ch);
+        int CountTrailingConsonants(ReadOnlySpan<char> span)
+        {
+            int count = 0;
+            for (int i = span.Length - 1; i >= 0; i--)
+            {
+                if (IsVowel(span[i])) break;
+                count++;
+            }
+            return count;
+        }
+
+        // Handle -ek → ku vs eku (movable 'e')
+        if (originalLower.EndsWith("ek", StringComparison.Ordinal) && replacement == "ku")
+        {
+            var stemWithoutEk = originalLower.Substring(0, originalLower.Length - 2);
+            // Only keep 'e' if removing it creates a ≥2 consonant cluster
+            var clusterLen = CountTrailingConsonants(stemWithoutEk.AsSpan());
+            if (clusterLen >= 2)
+            {
+                adjusted = stemWithoutEk + "eku";
+            }
+        }
+
+        // Handle -el cases where rules removed 'e' (…le). For surnames prefer keeping 'e': …ele
+        if (originalLower.EndsWith("el", StringComparison.Ordinal))
+        {
+            var stemWithoutEl = originalLower.Substring(0, originalLower.Length - 2);
+            var withoutE = stemWithoutEl + "le";
+            var withE = stemWithoutEl + "ele";
+
+            if (string.Equals(adjusted, withoutE, StringComparison.Ordinal))
+            {
+                if (isLastName)
+                {
+                    adjusted = withE;
+                }
+                else
+                {
+                    // For first names, keep withoutE unless it creates a 3-consonant cluster
+                    var clusterLen = CountTrailingConsonants(stemWithoutEl.AsSpan());
+                    if (clusterLen >= 3)
+                    {
+                        adjusted = withE;
+                    }
+                }
+            }
+            else if (isLastName && adjusted.EndsWith("eli", StringComparison.Ordinal))
+            {
+                // Prefer …ele over …eli for surnames like Friedel → Friedele
+                adjusted = adjusted.Substring(0, adjusted.Length - 3) + "ele";
+            }
+        }
+
+        // Handle -ec → če vs ci/ieci (foreign/short stems)
+        if (originalLower.EndsWith("ec", StringComparison.Ordinal) && replacement == "če")
+        {
+            var stemWithoutEc = originalLower.Substring(0, originalLower.Length - 2);
+
+            bool HasPolishCues(string s) => s.Contains("sz") || s.Contains("cz") || s.Contains("rz") || s.Contains('w') || s.Contains("ie");
+
+            if (originalLower.EndsWith("iec", StringComparison.Ordinal))
+            {
+                // Niemiec → Niemieci (but avoid doubling 'ie')
+                adjusted = stemWithoutEc + "ci";
+            }
+            else if (stemWithoutEc.Length <= 1)
+            {
+                // Gec → Geci (keep 'e')
+                adjusted = stemWithoutEc + "eci";
+            }
+            else if (HasPolishCues(originalLower))
+            {
+                // Foreign-looking: prefer softening to -ci
+                adjusted = stemWithoutEc + "ci";
+            }
+        }
+
+        // Prefer -ále instead of -áli for Czech-looking surnames ending in -ál
+        if (isLastName && originalLower.EndsWith("ál", StringComparison.Ordinal) && adjusted.EndsWith("áli", StringComparison.Ordinal))
+        {
+            adjusted = adjusted.Substring(0, adjusted.Length - 3) + "ále";
+        }
+
+        // Vowel+y or Hungarian clusters → add trailing 'i' (e.g., Révay → Révayi, Nagy → Nagyi)
+        if (originalLower.EndsWith('y'))
+        {
+            bool vowelPlusY = originalLower.EndsWith("ay") || originalLower.EndsWith("ey") || originalLower.EndsWith("oy") ||
+                              originalLower.EndsWith("iy") || originalLower.EndsWith("uy");
+            bool hungarianY = (originalLower.EndsWith("gy") || originalLower.EndsWith("ly") || originalLower.EndsWith("ny") || originalLower.EndsWith("ty"))
+                              && ContainsDiacritics(originalLower); // only when diacritics suggest foreign (e.g., Király)
+            if ((vowelPlusY || hungarianY) && adjusted.EndsWith('y'))
+            {
+                adjusted = adjusted + 'i';
+            }
+        }
+
+        return adjusted;
     }
 
     /// <summary>

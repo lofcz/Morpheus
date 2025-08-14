@@ -35,6 +35,7 @@ public static class VokativRules
         else
         {
             // Masculine names (or ambiguous) - use the comprehensive masculine rules
+            // We do not know if it's last name here; let the context-aware overload handle default
             return VokativRulesFromPython.TransformMasculineVocative(input);
         }
     }
@@ -63,8 +64,8 @@ public static class VokativRules
         }
         else
         {
-            // Masculine names - use the comprehensive masculine rules
-            return VokativRulesFromPython.TransformMasculineVocative(input);
+            // Masculine names - use the comprehensive masculine rules, pass isLastName for heuristics
+            return VokativRulesFromPython.TransformMasculineVocative(input, isLastName);
         }
     }
 

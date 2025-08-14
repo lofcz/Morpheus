@@ -78,6 +78,11 @@ public class NameToken
     public string Normalized { get; set; } = string.Empty;
     public TokenRole Role { get; set; } = TokenRole.Unknown;
     public int Position { get; set; }
+
+    public override string ToString()
+    {
+        return Normalized;
+    }
 }
 
 public sealed class DeclensionOptions
@@ -433,22 +438,7 @@ public static class Declension
             nameToken.Role = DetermineTokenRole(nameToken, i, tokens);
             nameTokens.Add(nameToken);
         }
-        
-		// If there are any unknown name tokens, don't trust partial first/last detections from DetermineTokenRole
-		var nameCategoryTokens = nameTokens.Where(t => t.Role is TokenRole.FirstName or TokenRole.LastName or TokenRole.Unknown).ToList();
-		bool hasUnknowns = nameCategoryTokens.Any(t => t.Role == TokenRole.Unknown);
-		bool hasDeterminedNames = nameCategoryTokens.Any(t => t.Role is TokenRole.FirstName or TokenRole.LastName);
-		if (hasUnknowns && hasDeterminedNames)
-		{
-			foreach (var t in nameCategoryTokens)
-			{
-				if (t.Role is TokenRole.FirstName or TokenRole.LastName)
-				{
-					t.Role = TokenRole.Unknown;
-				}
-			}
-		}
-        
+
         // Post-process to handle multi-token patterns (like "s. r. o.")
         ProcessMultiTokenPatterns(nameTokens);
         
