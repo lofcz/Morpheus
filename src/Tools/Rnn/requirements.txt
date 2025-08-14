@@ -1,0 +1,6 @@
+torch
+tokenizers
+pandas
+scikit-learn
+onnx
+onnxruntime

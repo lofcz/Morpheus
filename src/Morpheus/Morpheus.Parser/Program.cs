@@ -50,11 +50,18 @@ class Program
             var parsedFirstNames = ParseFirstNamesWithCounts(firstNamesExcelPath);
             var firstNameEntries = parsedFirstNames.Entries;
             var firstNameCounts = parsedFirstNames.IndexKeyToCount;
-            Console.WriteLine($"Parsed {firstNameEntries.Count} unique first names.");
+            Console.WriteLine($"Parsed {firstNameEntries.Count} unique first names from Excel.");
 
             // Parse surnames
             var surnameCounts = ParseSurnameCounts(surnamesExcelPath);
-            Console.WriteLine($"Parsed {surnameCounts.Count} unique surnames.");
+            Console.WriteLine($"Parsed {surnameCounts.Count} unique surnames from Excel.");
+
+            // Parse additional data from extra/ directory
+            var extraFirstNames = ParseExtraDataFile("extra/first/data.txt");
+            Console.WriteLine($"Parsed {extraFirstNames.Count} additional names from extra/first/data.txt");
+            
+            var extraLastNames = ParseExtraDataFile("extra/last/data.txt");
+            Console.WriteLine($"Parsed {extraLastNames.Count} additional surnames from extra/last/data.txt");
 
             // Combine into dictionary by index key, union roles, prefer gender from first-name data
             var combined = new Dictionary<string, CombinedItem>(StringComparer.Ordinal);
@@ -114,6 +121,61 @@ class Program
                 }
             }
 
+            // Add extra first names (role from data, gender only from first names)
+            foreach (var extraEntry in extraFirstNames)
+            {
+                if (string.IsNullOrEmpty(extraEntry.IndexKey)) continue;
+
+                if (!combined.TryGetValue(extraEntry.IndexKey, out var item))
+                {
+                    combined[extraEntry.IndexKey] = new CombinedItem
+                    {
+                        DisplayName = extraEntry.Name,
+                        IndexKey = extraEntry.IndexKey,
+                        Gender = extraEntry.Role.HasFlag(NameRole.First) ? extraEntry.Gender : new SimpleGender(SimpleGender.GenderType.Unknown),
+                        Role = extraEntry.Role,
+                        FirstCount = extraEntry.Role.HasFlag(NameRole.First) ? 1 : 0,
+                        SurnameCount = extraEntry.Role.HasFlag(NameRole.Surname) ? 1 : 0
+                    };
+                }
+                else
+                {
+                    item.Role |= extraEntry.Role;
+                    // Only update gender from first names (keep existing if it's not Unknown)
+                    if (extraEntry.Role.HasFlag(NameRole.First) && 
+                        item.Gender is SimpleGender sg && sg.Type == SimpleGender.GenderType.Unknown)
+                    {
+                        item.Gender = extraEntry.Gender;
+                    }
+                    if (extraEntry.Role.HasFlag(NameRole.First)) item.FirstCount = Math.Max(1, item.FirstCount);
+                    if (extraEntry.Role.HasFlag(NameRole.Surname)) item.SurnameCount = Math.Max(1, item.SurnameCount);
+                }
+            }
+
+            // Add extra last names (role = Surname, ignore gender as per requirements)
+            foreach (var extraEntry in extraLastNames)
+            {
+                if (string.IsNullOrEmpty(extraEntry.IndexKey)) continue;
+
+                if (!combined.TryGetValue(extraEntry.IndexKey, out var item))
+                {
+                    combined[extraEntry.IndexKey] = new CombinedItem
+                    {
+                        DisplayName = extraEntry.Name,
+                        IndexKey = extraEntry.IndexKey,
+                        Gender = new SimpleGender(SimpleGender.GenderType.Unknown), // Ignore gender for surnames
+                        Role = NameRole.Surname,
+                        SurnameCount = 1
+                    };
+                }
+                else
+                {
+                    item.Role |= NameRole.Surname;
+                    item.SurnameCount = Math.Max(1, item.SurnameCount);
+                    // Don't update gender - keep existing gender info from first names
+                }
+            }
+
             // Apply dominance rule for role pollution: 95% threshold and minimum 10 total
             foreach (var kvp in combined)
             {
@@ -160,6 +222,79 @@ class Program
         }
     }
     
+    static List<ExtraDataEntry> ParseExtraDataFile(string filePath)
+    {
+        var entries = new List<ExtraDataEntry>();
+        
+        if (!File.Exists(filePath))
+        {
+            Console.WriteLine($"Warning: Extra data file not found: {filePath}");
+            return entries;
+        }
+        
+        var lines = File.ReadAllLines(filePath);
+        Console.WriteLine($"Processing extra data file: {filePath} with {lines.Length} lines...");
+        
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            
+            var parts = line.Split(',');
+            if (parts.Length < 3) continue;
+            
+            var nameType = parts[0].Trim(); // F, L, or B
+            var name = parts[1].Trim();
+            var gender = parts[2].Trim(); // M, F, A, U
+            
+            if (string.IsNullOrEmpty(name)) continue;
+            
+            // Parse role from first character
+            NameRole role = nameType switch
+            {
+                "F" => NameRole.First,
+                "L" => NameRole.Surname,
+                "B" => NameRole.First | NameRole.Surname,
+                _ => NameRole.First // default
+            };
+            
+            // Parse gender info
+            GenderInfo genderInfo;
+            if (gender == "A" && parts.Length >= 5) // Androgenous with ratios
+            {
+                if (float.TryParse(parts[3], out var maleRatio) && 
+                    float.TryParse(parts[4], out var femaleRatio))
+                {
+                    genderInfo = new AndrogyneGender(maleRatio, femaleRatio);
+                }
+                else
+                {
+                    genderInfo = new SimpleGender(SimpleGender.GenderType.Unknown);
+                }
+            }
+            else
+            {
+                genderInfo = gender switch
+                {
+                    "M" => new SimpleGender(SimpleGender.GenderType.Male),
+                    "F" => new SimpleGender(SimpleGender.GenderType.Female),
+                    "U" => new SimpleGender(SimpleGender.GenderType.Unknown),
+                    _ => new SimpleGender(SimpleGender.GenderType.Unknown)
+                };
+            }
+            
+            entries.Add(new ExtraDataEntry
+            {
+                Name = name,
+                IndexKey = CreateIndexKey(name),
+                Gender = genderInfo,
+                Role = role
+            });
+        }
+        
+        Console.WriteLine($"Successfully parsed {entries.Count} entries from {filePath}");
+        return entries;
+    }
+
     static List<ProcessedNameEntry> ParseExcelFile(string excelPath)
     {
         var maleNames = new Dictionary<string, int>();
@@ -701,6 +836,14 @@ public class ProcessedNameEntry
         Gender = gender;
         Role = role;
     }
+}
+
+class ExtraDataEntry
+{
+    public string Name { get; set; } = string.Empty;
+    public string IndexKey { get; set; } = string.Empty;
+    public GenderInfo Gender { get; set; } = new SimpleGender(SimpleGender.GenderType.Unknown);
+    public NameRole Role { get; set; } = NameRole.First;
 }
 
 class CombinedItem

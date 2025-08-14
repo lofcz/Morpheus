@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -136,91 +137,158 @@ internal class BKTree
 
     public void SaveToFile(string path)
     {
-        using var writer = new StreamWriter(path);
-        if (_root == null) return;
+        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write);
+        using var writer = new BinaryWriter(stream, Encoding.UTF8);
         
-        var nodesToVisit = new Stack<Node>();
-        nodesToVisit.Push(_root);
-
-        while(nodesToVisit.Count > 0)
+        if (_root == null) 
         {
-            var node = nodesToVisit.Pop();
-            var gender = node.Data.Gender;
-            string line;
-
-            // Use a prefix to distinguish between gender types in the file
-            if (gender is SimpleGender sg)
-            {
-                // Persist role as the last field for simple gender
-                line = $"{sg.TypeIdentifier},{node.Data.Name},{(int)sg.Type},{(int)node.Data.Role}";
-            }
-            else if (gender is AndrogyneGender ag)
-            {
-                // Use InvariantCulture to ensure '.' is the decimal separator
-                var maleRatioStr = ag.MaleRatio?.ToString(CultureInfo.InvariantCulture) ?? "";
-                var femaleRatioStr = ag.FemaleRatio?.ToString(CultureInfo.InvariantCulture) ?? "";
-                // Persist role as the last field for androgyne
-                line = $"{ag.TypeIdentifier},{node.Data.Name},{maleRatioStr},{femaleRatioStr},{(int)node.Data.Role}";
-            }
-            else
-            {
-                continue; // Skip unknown types
-            }
-            writer.WriteLine(line);
-            
-            // Add all child nodes to the stack for traversal
-            foreach (var child in node.Children.Values)
-            {
-                nodesToVisit.Push(child);
-            }
+            writer.Write("BKTREE03"); // Version 3 - optimized format
+            writer.Write(0); // Count = 0
+            return;
+        }
+        
+        // Count nodes first
+        var nodeCount = CountNodes(_root);
+        
+        // Write header
+        writer.Write("BKTREE03"); // Version 3 - direct tree serialization
+        writer.Write(nodeCount);
+        
+        // Serialize the tree structure directly
+        SerializeNode(writer, _root);
+    }
+    
+    private int CountNodes(Node node)
+    {
+        int count = 1;
+        foreach (var child in node.Children.Values)
+        {
+            count += CountNodes(child);
+        }
+        return count;
+    }
+    
+    private void SerializeNode(BinaryWriter writer, Node node)
+    {
+        // Write node data (compact format)
+        WriteCompactString(writer, node.Data.Name);
+        writer.Write((byte)node.Data.Role);
+        
+        // Write gender info (compact)
+        var gender = node.Data.Gender;
+        if (gender is SimpleGender sg)
+        {
+            writer.Write((byte)((int)sg.Type + 1)); // 1-4 for Simple genders
+        }
+        else if (gender is AndrogyneGender ag)
+        {
+            writer.Write((byte)0); // 0 for Androgyne
+            writer.Write((ushort)((ag.MaleRatio ?? 0.0f) * 10000)); // Store as ushort (0-10000)
+            writer.Write((ushort)((ag.FemaleRatio ?? 0.0f) * 10000));
+        }
+        else
+        {
+            writer.Write((byte)1); // Unknown = 1 (same as SimpleGender.Unknown)
+        }
+        
+        // Write children count and edges
+        writer.Write((byte)node.Children.Count);
+        foreach (var kvp in node.Children)
+        {
+            writer.Write((byte)kvp.Key); // Distance (0-255 should be enough)
+            SerializeNode(writer, kvp.Value); // Recursively serialize child
+        }
+    }
+    
+    private void WriteCompactString(BinaryWriter writer, string str)
+    {
+        // More compact string storage
+        var bytes = Encoding.UTF8.GetBytes(str);
+        if (bytes.Length < 255)
+        {
+            writer.Write((byte)bytes.Length);
+            writer.Write(bytes);
+        }
+        else
+        {
+            writer.Write((byte)255);
+            writer.Write((ushort)bytes.Length);
+            writer.Write(bytes);
         }
     }
 
     public static BKTree LoadFromFile(string path)
     {
         var tree = new BKTree();
-        var lines = File.ReadAllLines(path);
-
-        foreach (var line in lines)
+        
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
+        using var reader = new BinaryReader(stream, Encoding.UTF8);
+        
+        // Check format version
+        var header = reader.ReadString();
+        var nodeCount = reader.ReadInt32();
+        
+        if (nodeCount > 0)
         {
-            var parts = line.Split(new[] {','}, StringSplitOptions.None);
-            if (parts.Length < 2) continue;
-
-            string typeId = parts[0];
-            string name = parts[1];
-            GenderInfo genderInfo = null;
-            NameRole role = NameRole.First; // default for backward compatibility
-
-            if (typeId == "S" && parts.Length >= 3 && int.TryParse(parts[2], out var genderInt))
-            {
-                genderInfo = new SimpleGender((SimpleGender.GenderType)genderInt);
-                // Optional 4th part with role
-                if (parts.Length >= 4 && int.TryParse(parts[3], out var roleInt))
-                {
-                    role = (NameRole)roleInt;
-                }
-            }
-            else if (typeId == "A" && parts.Length >= 4)
-            {
-                // Use InvariantCulture for parsing
-                float? maleRatio = float.TryParse(parts[2], NumberStyles.Any, CultureInfo.InvariantCulture, out var mr) ? mr : (float?)null;
-                float? femaleRatio = float.TryParse(parts[3], NumberStyles.Any, CultureInfo.InvariantCulture, out var fr) ? fr : (float?)null;
-                genderInfo = new AndrogyneGender(maleRatio, femaleRatio);
-                // Optional 5th part with role
-                if (parts.Length >= 5 && int.TryParse(parts[4], out var roleInt))
-                {
-                    role = (NameRole)roleInt;
-                }
-            }
-
-            if (genderInfo != null)
-            {
-                // Create index key for search purposes
-                string indexKey = Normalizer.RemoveDiacritics(name).ToLowerInvariant().Trim();
-                tree.Add(new NameEntry(name, indexKey, genderInfo, role));
-            }
+            tree._root = DeserializeNode(reader);
         }
+        
         return tree;
+    }
+    
+    private static Node DeserializeNode(BinaryReader reader)
+    {
+        // Read node data
+        var name = ReadCompactString(reader);
+        var role = (NameRole)reader.ReadByte();
+        
+        // Read gender info
+        var genderByte = reader.ReadByte();
+        GenderInfo genderInfo;
+        
+        if (genderByte == 0) // Androgyne
+        {
+            var maleRatio = reader.ReadUInt16() / 10000.0f;
+            var femaleRatio = reader.ReadUInt16() / 10000.0f;
+            genderInfo = new AndrogyneGender(maleRatio, femaleRatio);
+        }
+        else // Simple gender (1-4)
+        {
+            var simpleType = (SimpleGender.GenderType)(genderByte - 1);
+            genderInfo = new SimpleGender(simpleType);
+        }
+        
+        // Create index key
+        string indexKey = Normalizer.RemoveDiacritics(name).ToLowerInvariant().Trim();
+        var entry = new NameEntry(name, indexKey, genderInfo, role);
+        var node = new Node(entry);
+        
+        // Read children
+        var childCount = reader.ReadByte();
+        for (int i = 0; i < childCount; i++)
+        {
+            var distance = reader.ReadByte();
+            var childNode = DeserializeNode(reader);
+            node.Children[distance] = childNode;
+        }
+        
+        return node;
+    }
+    
+    private static string ReadCompactString(BinaryReader reader)
+    {
+        var length = reader.ReadByte();
+        int actualLength;
+        if (length == 255)
+        {
+            actualLength = reader.ReadUInt16();
+        }
+        else
+        {
+            actualLength = length;
+        }
+        var bytes = reader.ReadBytes(actualLength);
+        return Encoding.UTF8.GetString(bytes);
     }
 }
 

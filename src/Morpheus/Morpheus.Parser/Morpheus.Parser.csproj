@@ -25,6 +25,12 @@
       <None Update="prijmeni.xls">
         <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       </None>
+      <None Update="extra\first\data.txt">
+        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      </None>
+      <None Update="extra\last\data.txt">
+        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      </None>
     </ItemGroup>
 
 </Project>
