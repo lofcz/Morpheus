@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.IO.Compression;
 
 namespace Morpheus;
 
@@ -67,11 +68,11 @@ public static class Levenshtein
 }
 
 /// <summary>
-/// The internal implementation of the BK-Tree.
+/// The BK-Tree implementation for fuzzy string matching.
 /// </summary>
-internal class BKTree
+public class BKTree
 {
-    private Node _root;
+    private Node? _root;
 
     private class Node
     {
@@ -94,7 +95,7 @@ internal class BKTree
             int distance = Levenshtein.Distance(currentNode.Data.IndexKey, entry.IndexKey);
             if (distance == 0) return;
 
-            if (currentNode.Children.TryGetValue(distance, out Node childNode))
+            if (currentNode.Children.TryGetValue(distance, out Node? childNode))
             {
                 currentNode = childNode;
             }
@@ -106,35 +107,46 @@ internal class BKTree
         }
     }
 
-    public List<NameEntry> Search(string queryWord, int maxDistance)
+    // ==== NEW COMPACT STRUCTS ====
+    internal readonly struct FlatNode
     {
-        var results = new List<NameEntry>();
-        if (_root == null) return results;
+        public readonly int NameOffset;      // byte offset in UTF-8 blob
+        public readonly ushort NameLength;   // UTF-8 byte length
+        public readonly int FirstEdgeIndex;  // -1 if leaf
+        public readonly byte EdgeCount;      // number of outgoing edges
+        public readonly NameRole Role;       // 1 byte after cast
+        public readonly byte GenderTag;      // 0=Androgyne,1=Unknown,2=Male,3=Female
+        public readonly ushort MaleRatio;    // *10000 (only if androgyne)
+        public readonly ushort FemaleRatio;
 
-        var candidates = new Queue<Node>();
-        candidates.Enqueue(_root);
-
-        while (candidates.Count > 0)
+        public FlatNode(int nameOfs, ushort nameLen, int firstEdge, byte edgeCnt, NameRole role,
+                        byte genderTag, ushort male, ushort female)
         {
-            Node node = candidates.Dequeue();
-            int distance = Levenshtein.Distance(node.Data.IndexKey, queryWord);
-
-            if (distance <= maxDistance)
-            {
-                results.Add(node.Data);
-            }
-
-            for (int i = Math.Max(1, distance - maxDistance); i <= distance + maxDistance; i++)
-            {
-                if (node.Children.TryGetValue(i, out Node child))
-                {
-                    candidates.Enqueue(child);
-                }
-            }
+            NameOffset = nameOfs;
+            NameLength = nameLen;
+            FirstEdgeIndex = firstEdge;
+            EdgeCount = edgeCnt;
+            Role = role;
+            GenderTag = genderTag;
+            MaleRatio = male;
+            FemaleRatio = female;
         }
-        return results;
     }
 
+    internal readonly struct FlatEdge
+    {
+        public readonly byte Distance;   // Levenshtein distance to child
+        public readonly int ChildIndex;  // index in FlatNode[]
+        public FlatEdge(byte d,int idx){Distance=d;ChildIndex=idx;}
+    }
+
+    // ==== BKTree fields for compact representation ====
+    private FlatNode[] _flatNodes = Array.Empty<FlatNode>();
+    private FlatEdge[] _flatEdges = Array.Empty<FlatEdge>();
+    private byte[] _nameBlob = Array.Empty<byte>();
+    private string[] _indexKeys = Array.Empty<string>();
+
+    // ================== SAVE TO FILE (flat) ==================
     public void SaveToFile(string path)
     {
         using var stream = new FileStream(path, FileMode.Create, FileAccess.Write);
@@ -142,177 +154,361 @@ internal class BKTree
         
         if (_root == null) 
         {
-            writer.Write("BKTREE03"); // Version 3 - optimized format
-            writer.Write(0); // Count = 0
+            writer.Write("BKTREE03");
+            writer.Write((byte)0);      // flags: 0 = uncompressed
+            writer.Write(0);            // node count
+            writer.Write(0);            // edge count
+            writer.Write(0);            // blob length
             return;
         }
         
-        // Count nodes first
-        var nodeCount = CountNodes(_root);
-        
-        // Write header
-        writer.Write("BKTREE03"); // Version 3 - direct tree serialization
-        writer.Write(nodeCount);
-        
-        // Serialize the tree structure directly
-        SerializeNode(writer, _root);
-    }
-    
-    private int CountNodes(Node node)
-    {
-        int count = 1;
-        foreach (var child in node.Children.Values)
+        // Build flat lists
+        var nodes = new List<FlatNode>();
+        var edges = new List<FlatEdge>();
+        var utf8 = new List<byte>();
+
+        int AddNodeRecursive(Node n)
         {
-            count += CountNodes(child);
+            int nameOfs = utf8.Count;
+            var nameBytes = Encoding.UTF8.GetBytes(n.Data.Name);
+            utf8.AddRange(nameBytes);
+            ushort nameLen = (ushort)nameBytes.Length;
+
+            byte genderTag = GenderToTag(n.Data.Gender, out ushort male, out ushort female);
+
+            nodes.Add(new FlatNode(nameOfs, nameLen, -1, 0, n.Data.Role, genderTag, male, female));
+            int currentIdx = nodes.Count - 1;
+
+            var localEdges = new List<FlatEdge>();
+            foreach (var kvp in n.Children)
+            {
+                byte dist = (byte)kvp.Key;
+                int childIdx = AddNodeRecursive(kvp.Value);
+                localEdges.Add(new FlatEdge(dist, childIdx));
+            }
+
+            int firstEdgeIdx = edges.Count;
+            edges.AddRange(localEdges);
+            byte edgeCnt = (byte)localEdges.Count;
+
+            nodes[currentIdx] = new FlatNode(nameOfs, nameLen, edgeCnt == 0 ? -1 : firstEdgeIdx, edgeCnt, n.Data.Role,
+                                             genderTag, male, female);
+            return currentIdx;
         }
-        return count;
-    }
-    
-    private void SerializeNode(BinaryWriter writer, Node node)
-    {
-        // Write node data (compact format)
-        WriteCompactString(writer, node.Data.Name);
-        writer.Write((byte)node.Data.Role);
-        
-        // Write gender info (compact)
-        var gender = node.Data.Gender;
-        if (gender is SimpleGender sg)
+
+        AddNodeRecursive(_root);
+
+        // Prepare raw sections as byte arrays
+        byte[] nodesBytes;
+        byte[] edgesBytes;
+        byte[] blobBytes = utf8.ToArray();
+
+        using (var ms = new MemoryStream())
+        using (var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write((byte)((int)sg.Type + 1)); // 1-4 for Simple genders
+            foreach (var fn in nodes)
+            {
+                bw.Write(fn.NameOffset);
+                bw.Write(fn.NameLength);
+                bw.Write(fn.FirstEdgeIndex);
+                bw.Write(fn.EdgeCount);
+                bw.Write((byte)fn.Role);
+                bw.Write(fn.GenderTag);
+                bw.Write(fn.MaleRatio);
+                bw.Write(fn.FemaleRatio);
+            }
+            bw.Flush();
+            nodesBytes = ms.ToArray();
         }
-        else if (gender is AndrogyneGender ag)
+
+        using (var ms = new MemoryStream())
+        using (var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write((byte)0); // 0 for Androgyne
-            writer.Write((ushort)((ag.MaleRatio ?? 0.0f) * 10000)); // Store as ushort (0-10000)
-            writer.Write((ushort)((ag.FemaleRatio ?? 0.0f) * 10000));
+            foreach (var e in edges)
+            {
+                bw.Write(e.Distance);
+                bw.Write(e.ChildIndex);
+            }
+            bw.Flush();
+            edgesBytes = ms.ToArray();
         }
-        else
+
+        // Compress sections with Deflate (Fastest)
+        static byte[] DeflateFast(byte[] data)
         {
-            writer.Write((byte)1); // Unknown = 1 (same as SimpleGender.Unknown)
+            using var outMs = new MemoryStream();
+            using (var ds = new DeflateStream(outMs, new CompressionLevel?(CompressionLevel.Fastest).Value, leaveOpen: true))
+            {
+                ds.Write(data, 0, data.Length);
+            }
+            return outMs.ToArray();
         }
-        
-        // Write children count and edges
-        writer.Write((byte)node.Children.Count);
-        foreach (var kvp in node.Children)
-        {
-            writer.Write((byte)kvp.Key); // Distance (0-255 should be enough)
-            SerializeNode(writer, kvp.Value); // Recursively serialize child
-        }
-    }
-    
-    private void WriteCompactString(BinaryWriter writer, string str)
-    {
-        // More compact string storage
-        var bytes = Encoding.UTF8.GetBytes(str);
-        if (bytes.Length < 255)
-        {
-            writer.Write((byte)bytes.Length);
-            writer.Write(bytes);
-        }
-        else
-        {
-            writer.Write((byte)255);
-            writer.Write((ushort)bytes.Length);
-            writer.Write(bytes);
-        }
+
+        var nodesCompressed = DeflateFast(nodesBytes);
+        var edgesCompressed = DeflateFast(edgesBytes);
+        var blobCompressed  = DeflateFast(blobBytes);
+
+        // --- write header ---
+        writer.Write("BKTREE03");
+        writer.Write((byte)1); // flags: bit0=compressed
+        writer.Write(nodes.Count);          // node count
+        writer.Write(edges.Count);          // edge count
+        writer.Write(blobBytes.Length);     // original blob length
+
+        // write compressed sizes for three sections
+        writer.Write(nodesCompressed.Length);
+        writer.Write(edgesCompressed.Length);
+        writer.Write(blobCompressed.Length);
+
+        // payloads
+        writer.Write(nodesCompressed);
+        writer.Write(edgesCompressed);
+        writer.Write(blobCompressed);
     }
 
+    private static byte GenderToTag(GenderInfo g,out ushort male,out ushort female)
+    {
+        male=female=0;
+        if(g is AndrogyneGender ag)
+        {
+            male=(ushort)((ag.MaleRatio??0f)*10000);
+            female=(ushort)((ag.FemaleRatio??0f)*10000);
+            return 0;
+        }
+        if(g is SimpleGender sg)
+        {
+            return (byte)((int)sg.Type+1); // 1..3
+        }
+        return 1; // Unknown
+    }
+
+    // ================== LOAD FROM FILE (flat) ==================
     public static BKTree LoadFromFile(string path)
     {
         var tree = new BKTree();
-        
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var reader = new BinaryReader(stream, Encoding.UTF8);
         
-        // Check format version
         var header = reader.ReadString();
-        var nodeCount = reader.ReadInt32();
-        
-        if (nodeCount > 0)
+        int flags = reader.ReadByte();
+        int nodeCount = reader.ReadInt32();
+        int edgeCount = reader.ReadInt32();
+        int blobLen   = reader.ReadInt32();
+
+        if (nodeCount == 0)
+            return tree;
+
+        byte[] nodesBuf;
+        byte[] edgesBuf;
+        byte[] blobBuf;
+
+        bool compressed = (flags & 1) != 0;
+        if (compressed)
         {
-            tree._root = DeserializeNode(reader);
-        }
-        
-        return tree;
-    }
-    
-    private static Node DeserializeNode(BinaryReader reader)
-    {
-        // Read node data
-        var name = ReadCompactString(reader);
-        var role = (NameRole)reader.ReadByte();
-        
-        // Read gender info
-        var genderByte = reader.ReadByte();
-        GenderInfo genderInfo;
-        
-        if (genderByte == 0) // Androgyne
-        {
-            var maleRatio = reader.ReadUInt16() / 10000.0f;
-            var femaleRatio = reader.ReadUInt16() / 10000.0f;
-            genderInfo = new AndrogyneGender(maleRatio, femaleRatio);
-        }
-        else // Simple gender (1-4)
-        {
-            var simpleType = (SimpleGender.GenderType)(genderByte - 1);
-            genderInfo = new SimpleGender(simpleType);
-        }
-        
-        // Create index key
-        string indexKey = Normalizer.RemoveDiacritics(name).ToLowerInvariant().Trim();
-        var entry = new NameEntry(name, indexKey, genderInfo, role);
-        var node = new Node(entry);
-        
-        // Read children
-        var childCount = reader.ReadByte();
-        for (int i = 0; i < childCount; i++)
-        {
-            var distance = reader.ReadByte();
-            var childNode = DeserializeNode(reader);
-            node.Children[distance] = childNode;
-        }
-        
-        return node;
-    }
-    
-    private static string ReadCompactString(BinaryReader reader)
-    {
-        var length = reader.ReadByte();
-        int actualLength;
-        if (length == 255)
-        {
-            actualLength = reader.ReadUInt16();
+            int nodesZ = reader.ReadInt32();
+            int edgesZ = reader.ReadInt32();
+            int blobZ  = reader.ReadInt32();
+
+            static byte[] InflateExact(BinaryReader br, int compLen, int rawLen)
+            {
+                var comp = br.ReadBytes(compLen);
+                using var inMs = new MemoryStream(comp);
+                using var ds = new DeflateStream(inMs, CompressionMode.Decompress);
+                var raw = new byte[rawLen];
+                int read = 0; int n;
+                while ((n = ds.Read(raw, read, raw.Length - read)) > 0) read += n;
+                return raw;
+            }
+
+            // We must know raw sizes of nodes/edges; derive from counts and field sizes
+            int nodeRecordSize = 4 + 2 + 4 + 1 + 1 + 1 + 2 + 2; // match Save layout
+            int edgeRecordSize = 1 + 4;
+            int nodesRawLen = nodeCount * nodeRecordSize;
+            int edgesRawLen = edgeCount * edgeRecordSize;
+
+            nodesBuf = InflateExact(reader, nodesZ, nodesRawLen);
+            edgesBuf = InflateExact(reader, edgesZ, edgesRawLen);
+            blobBuf  = InflateExact(reader, blobZ, blobLen);
         }
         else
         {
-            actualLength = length;
+            // Uncompressed path (legacy)
+            var nodes = new FlatNode[nodeCount];
+            var edges = new FlatEdge[edgeCount];
+            var blob  = new byte[blobLen];
+
+            for (int i = 0; i < nodeCount; i++)
+            {
+                int nameOfs = reader.ReadInt32();
+                ushort nameLen = reader.ReadUInt16();
+                int firstEdge = reader.ReadInt32();
+                byte edgeCnt = reader.ReadByte();
+                NameRole role = (NameRole)reader.ReadByte();
+                byte genderTag = reader.ReadByte();
+                ushort male = reader.ReadUInt16();
+                ushort female = reader.ReadUInt16();
+                nodes[i] = new FlatNode(nameOfs, nameLen, firstEdge, edgeCnt, role, genderTag, male, female);
+            }
+            for (int i = 0; i < edgeCount; i++)
+            {
+                byte dist = reader.ReadByte();
+                int child = reader.ReadInt32();
+                edges[i] = new FlatEdge(dist, child);
+            }
+            stream.Read(blob, 0, blobLen);
+
+            tree._flatNodes = nodes;
+            tree._flatEdges = edges;
+            tree._nameBlob = blob;
+            tree._indexKeys = new string[nodeCount];
+            return tree;
         }
-        var bytes = reader.ReadBytes(actualLength);
-        return Encoding.UTF8.GetString(bytes);
+
+        // Parse decompressed buffers
+        var nodesArr = new FlatNode[nodeCount];
+        var edgesArr = new FlatEdge[edgeCount];
+        using (var ms = new MemoryStream(nodesBuf))
+        using (var br = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true))
+        {
+            for (int i = 0; i < nodeCount; i++)
+            {
+                int nameOfs = br.ReadInt32();
+                ushort nameLen = br.ReadUInt16();
+                int firstEdge = br.ReadInt32();
+                byte edgeCnt = br.ReadByte();
+                NameRole role = (NameRole)br.ReadByte();
+                byte genderTag = br.ReadByte();
+                ushort male = br.ReadUInt16();
+                ushort female = br.ReadUInt16();
+                nodesArr[i] = new FlatNode(nameOfs, nameLen, firstEdge, edgeCnt, role, genderTag, male, female);
+            }
+        }
+        using (var ms = new MemoryStream(edgesBuf))
+        using (var br = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true))
+        {
+            for (int i = 0; i < edgeCount; i++)
+            {
+                byte dist = br.ReadByte();
+                int child = br.ReadInt32();
+                edgesArr[i] = new FlatEdge(dist, child);
+            }
+        }
+
+        tree._flatNodes = nodesArr;
+        tree._flatEdges = edgesArr;
+        tree._nameBlob  = blobBuf;
+        tree._indexKeys = new string[nodeCount];
+        return tree;
+    }
+    
+    // ================== SEARCH (flat) ==================
+    public List<NameEntry> Search(string queryName,int maxDistance)
+    {
+        if(_flatNodes.Length==0)
+        {
+            // fallback to legacy object tree (during build time)
+            return _root==null? new List<NameEntry>() : SearchLegacy(queryName,maxDistance);
+        }
+        var results = new List<NameEntry>();
+        string normalizedQuery = Normalizer.RemoveDiacritics(queryName).ToLowerInvariant().Trim();
+        if(_flatNodes.Length==0) return results;
+        var queue = new Queue<int>();
+        queue.Enqueue(0); // root is 0
+        while(queue.Count>0)
+        {
+            int idx = queue.Dequeue();
+            var node = _flatNodes[idx];
+            string key = _indexKeys[idx] ??= GetIndexKey(idx);
+            int dist = Levenshtein.Distance(key, normalizedQuery);
+            if(dist<=maxDistance)
+                results.Add(ToNameEntry(idx));
+            // enqueue children whose edge distance is within band
+            if(node.EdgeCount==0) continue;
+            int first = node.FirstEdgeIndex;
+            for(int e=first;e<first+node.EdgeCount;e++)
+            {
+                var edge=_flatEdges[e];
+                int d=edge.Distance;
+                if(d>=dist-maxDistance && d<=dist+maxDistance)
+                    queue.Enqueue(edge.ChildIndex);
+            }
+        }
+        return results;
+    }
+
+    private NameEntry ToNameEntry(int idx)
+    {
+        var n=_flatNodes[idx];
+        string disp = Encoding.UTF8.GetString(_nameBlob,n.NameOffset,n.NameLength);
+        GenderInfo gender = n.GenderTag switch{0=>new AndrogyneGender(n.MaleRatio/10000f,n.FemaleRatio/10000f),
+                                              2=>new SimpleGender(SimpleGender.GenderType.Male),
+                                              3=>new SimpleGender(SimpleGender.GenderType.Female),
+                                              _=>new SimpleGender(SimpleGender.GenderType.Unknown)};
+        return new NameEntry(disp, _indexKeys[idx]!, gender, n.Role);
+    }
+
+    private string GetIndexKey(int idx)
+    {
+        var n=_flatNodes[idx];
+        string disp = Encoding.UTF8.GetString(_nameBlob,n.NameOffset,n.NameLength);
+        return Normalizer.RemoveDiacritics(disp).ToLowerInvariant().Trim();
+    }
+
+    private List<NameEntry> SearchLegacy(string query,int maxDist)
+    {
+        var list=new List<NameEntry>();
+        if(_root==null) return list;
+        string normalizedQuery = Normalizer.RemoveDiacritics(query).ToLowerInvariant().Trim();
+        var q=new Queue<Node>();q.Enqueue(_root);
+        while(q.Count>0)
+        {
+            var node=q.Dequeue();
+            int dist=Levenshtein.Distance(node.Data.IndexKey,normalizedQuery);
+            if(dist<=maxDist) list.Add(node.Data);
+            foreach(var kvp in node.Children)
+            {
+                int d=kvp.Key;
+                if(d>=dist-maxDist && d<=dist+maxDist) q.Enqueue(kvp.Value);
+            }
+        }
+        return list;
     }
 }
 
 public static class BKTreeBuilder
 {
-    public static void BuildIndex(string jsonInputPath, string indexOutputPath)
+    public static void BuildIndex(IEnumerable<NameEntry> nameEntries, string indexOutputPath)
     {
-        var jsonString = File.ReadAllText(jsonInputPath);
-        // The custom GenderInfoConverter will handle the complex JSON
-        var jsonEntries = JsonSerializer.Deserialize<List<JsonNameEntry>>(jsonString);
-
-        if (jsonEntries == null) throw new InvalidDataException("JSON parsing failed.");
-
         var tree = new BKTree();
-        foreach (var jsonEntry in jsonEntries)
+        foreach (var entry in nameEntries)
         {
-            // The Gender property is now a GenderInfo object thanks to the converter
-            string indexKey = Normalizer.RemoveDiacritics(jsonEntry.Name).ToLowerInvariant().Trim();
-            var entry = new NameEntry(jsonEntry.Name, indexKey, jsonEntry.Gender, jsonEntry.Role);
             tree.Add(entry);
         }
-
         tree.SaveToFile(indexOutputPath);
     }
+
+    // CONVENIENCE: Build from combined data without JSON intermediate
+    public static void BuildIndexFromCombined(Dictionary<string, CombinedItem> combined, string indexOutputPath)
+    {
+        var tree = new BKTree();
+        foreach (var kvp in combined.Values)
+        {
+            var entry = new NameEntry(kvp.DisplayName, kvp.IndexKey, kvp.Gender, kvp.Role);
+            tree.Add(entry);
+        }
+        tree.SaveToFile(indexOutputPath);
+    }
+}
+
+// Data structure for building index from combined first name + surname data
+public class CombinedItem
+{
+    public string DisplayName { get; set; } = string.Empty; // diacritics-preserved display name
+    public string IndexKey { get; set; } = string.Empty;    // normalized key
+    public GenderInfo Gender { get; set; } = new SimpleGender(SimpleGender.GenderType.Unknown);
+    public NameRole Role { get; set; } = NameRole.First;
+    public int FirstCount { get; set; }
+    public int SurnameCount { get; set; }
 }
 
 /// <summary>
@@ -433,10 +629,10 @@ public readonly struct NameEntry
 internal class JsonNameEntry
 {
     [JsonPropertyName("name")]
-    public string Name { get; set; }
+    public string Name { get; set; } = string.Empty;
 
     [JsonPropertyName("gender")]
-    public GenderInfo Gender { get; set; }
+    public GenderInfo Gender { get; set; } = new SimpleGender(SimpleGender.GenderType.Unknown);
 
     [JsonPropertyName("role")]
     public NameRole Role { get; set; }

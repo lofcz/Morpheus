@@ -26,7 +26,6 @@ class Program
     {
         string firstNamesExcelPath = "jmena.xls";
         string surnamesExcelPath = "prijmeni.xls";
-        string jsonOutputPath = "names_output.json";
         string indexOutputPath = "names_index.bk";
         
         Console.WriteLine("Parsing Czech government names and surnames (combined index)...");
@@ -204,12 +203,8 @@ class Program
             Console.WriteLine($"  - Surnames only:   {surnameOnly}");
             Console.WriteLine($"  - Both:            {both}");
             
-            // Generate JSON file
-            GenerateJsonFileFromCombined(combined, jsonOutputPath);
-            Console.WriteLine($"Generated JSON file: {jsonOutputPath}");
-            
-            // Build BK tree index
-            BKTreeBuilder.BuildIndex(jsonOutputPath, indexOutputPath);
+            Console.WriteLine("Building optimized BK tree index...");
+            BuildOptimizedIndex(combined, indexOutputPath);
             Console.WriteLine($"Built BK tree index: {indexOutputPath}");
             
             // Demonstrate usage
@@ -732,7 +727,7 @@ class Program
         var testQueries = new[] { 
             "Alex", "alex", "ALEX",  // The requested search
             "Alexa", "Alexandra", "Alexander",  // Related names
-            "Jiří", "Jiri", "jiri", "jyri", "kahleova"  // Test the fixed problematic name
+            "Jiří", "Jiri", "jiri", "jyyri", "kahleova"  // Test the fixed problematic name
         };
         
         Console.WriteLine("=== SEARCH DEMONSTRATION ===\n");
@@ -819,6 +814,16 @@ class Program
         {
             PerformTieredSearch(searcher, testName);
         }
+    }
+    
+    static void BuildOptimizedIndex(Dictionary<string, CombinedItem> combined, string indexOutputPath)
+    {
+        // Convert to NameEntry enumerable
+        var nameEntries = combined.Values.Select(kvp => 
+            new Morpheus.NameEntry(kvp.DisplayName, kvp.IndexKey, kvp.Gender, kvp.Role));
+        
+        // Use the optimized builder
+        Morpheus.BKTreeBuilder.BuildIndex(nameEntries, indexOutputPath);
     }
 }
 
