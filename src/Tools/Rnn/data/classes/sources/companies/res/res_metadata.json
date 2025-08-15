@@ -1,0 +1,33 @@
+{
+"@context": ["http://www.w3.org/ns/csvw",{"@language": "cs"}],
+  "url": "res_data.csv",
+  "tableSchema": {
+    "columns": [
+		{"name":"ICO","titles":"ICO","dc:description":"Identifikační číslo","required":true,"datatype": "string"},
+		{"name":"OKRESLAU","titles":"OKRESLAU","dc:description":"Kód okresu sídla (dle CZ-NUTS) dle číselníku ČSÚ (109)","required":false,"datatype": "string"},
+		{"name":"DDATVZN","titles":"DDATVZN","dc:description":"Datum vzniku ve formátu YYYY-MM-DD","required":false,"datatype": "date"},
+		{"name":"DDATZAN","titles":"DDATZAN","dc:description":"Datum zániku ve formátu YYYY-MM-DD","required":false,"datatype": "date"},
+		{"name":"ZPZAN","titles":"ZPZAN","dc:description":"Způsob zániku dle číselníku ČSÚ (572)","required":false,"datatype": "string"},
+		{"name":"DDATPAKT","titles":"DDATPAKT","dc:description":"Datum aktualizace ve formátu YYYY-MM-DD","required":false,"datatype": "date"},
+		{"name":"FORMA","titles":"FORMA","dc:description":"Právní forma (statistická) dle číselníku ČSÚ (56)","required":false,"datatype": "string"},
+		{"name":"ROSFORMA","titles":"ROSFORMA","dc:description":"Právní forma (registr osob) dle číselníku ČSÚ (149)","required":false,"datatype": "string"},
+		{"name":"KATPO","titles":"KATPO","dc:description":"Kategorie dle počtu pracovníků dle číselníku ČSÚ (579)","required":false,"datatype": "string"},
+		{"name":"NACE","titles":"NACE","dc:description":"Převažující činnost (statistická) dle klasifikace ČSÚ (80004)","required":false,"datatype": "string"},
+		{"name":"ICZUJ","titles":"ICZUJ","dc:description":"Identifikační číslo základní územní jednotky sídla organizace dle číselníku ČSÚ (51)","required":false,"datatype": "string"},
+		{"name":"FIRMA","titles":"FIRMA","dc:description":"Firma, název (jméno)","required":false,"datatype": "string"},
+		{"name":"CISS2010","titles":"CISS2010","dc:description":"Kód institucionálního sektoru (ESA2010) dle číselníku ČSÚ (5161)","required":false,"datatype": "string"},
+		{"name":"KODADM","titles":"KODADM","dc:description":"Kód adresního místa dle ISUI (ČÚZK)","required":false,"datatype": "string"},
+		{"name":"TEXTADR","titles":"TEXTADR","dc:description":"Text adresy (pro místa s chybějícím KODADM)","required":false,"datatype": "string"},
+		{"name":"PSC","titles":"PSC","dc:description":"Adresa sídla dle KODADM: PSČ","required":false,"datatype": "string"},
+		{"name":"OBEC_TEXT","titles":"OBEC_TEXT","dc:description":"Adresa sídla dle KODADM: obec","required":false,"datatype": "string"},
+		{"name":"COBCE_TEXT","titles":"COBCE_TEXT","dc:description":"Adresa sídla dle KODADM: část obce","required":false,"datatype": "string"},
+		{"name":"ULICE_TEXT","titles":"ULICE_TEXT","dc:description":"Adresa sídla dle KODADM: ulice","required":false,"datatype": "string"},
+		{"name":"TYPCDOM","titles":"TYPCDOM","dc:description":"Typ čísla domovního dle číselníku ČSÚ (73)","required":false,"datatype": "string"},
+		{"name":"CDOM","titles":"CDOM","dc:description":"Adresa sídla dle KODADM: číslo domovní","required":false,"datatype": "string"},
+		{"name":"COR","titles":"COR","dc:description":"Adresa sídla dle KODADM: číslo orientační","required":false,"datatype": "string"},
+		{"name":"DATPLAT","titles":"DATPLAT","dc:description":"Datum platnosti dat ve formátu YYYY-MM-DD","required":true,"datatype": "date"},
+		{"name":"PRIZNAK","titles":"PRIZNAK","dc:description":"Vyjadřuje změnu oproti minulému stavu: P = přírůstek záznamu oproti minulému stavu (může být i znovuobnovení IČO po více než 48 měsících, např. IČO zaniklo v 2015-07 a znovu obnovilo činnost 2021-07-18 => dostane v dávce k 31.7.2021 příznak P, neboť z výstupů vypadl již v červenci 2019), Z = změna v záznamu oproti minulému stavu","required":false,"datatype": "string"}
+    ],
+    "primaryKey": "ICO"
+  }
+}				
