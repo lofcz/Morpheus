@@ -64,7 +64,15 @@ public class DeclensionTests
     {
         var s = "ing.Pavel Stupárek";
         var r = Declension.Decline(s, CzechCase.Vocative);
-        Assert.That(r.Output, Is.EqualTo("Ing. Pavle Stupárku"));
+        Assert.That(r.Output, Is.EqualTo("pane inženýre"));
+    }
+    
+    [Test]
+    public void DeclineMultipleTitles()
+    {
+        var s = "Ing. Tomáš Novák, Ph.D.";
+        var r = Declension.Decline(s, CzechCase.Vocative);
+        Assert.That(r.Output, Is.EqualTo("pane doktore"));
     }
     
     [Test]

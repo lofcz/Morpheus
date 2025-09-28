@@ -93,6 +93,10 @@ public sealed class DeclensionOptions
     public bool OmitLastName { get; init; }
     public bool OmitTitles { get; init; }
     public bool Explain { get; init; }
+    public bool DisableTitleSalutation { get; init; }
+    public string? CustomMaleSalutationPrefix { get; init; }
+    public string? CustomFemaleSalutationPrefix { get; init; }
+    public string? CustomCompanySalutationPrefix { get; init; }
 }
 
 public sealed class DeclensionResult
@@ -167,103 +171,126 @@ public static class Declension
         ["Paní"] = new TitleInfo { Type = TitleType.Salutation, Gender = TitleGender.Feminine, PlacesBefore = true },
         
         // Bachelor degrees
-        ["Bc."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Bachelor, PlacesBefore = true },
-        ["BcA."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Bachelor, PlacesBefore = true },
+        ["Bc."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Bachelor, PlacesBefore = true, Rank = SalutationRank.None },
+        ["BcA."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Bachelor, PlacesBefore = true, Rank = SalutationRank.None },
+        ["Bc"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Bachelor, PlacesBefore = true, Rank = SalutationRank.None },
+        ["BcA"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Bachelor, PlacesBefore = true, Rank = SalutationRank.None },
         
         // Master/Engineer degrees
-        ["Ing."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["Ing. arch."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["MUDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["MDDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["MVDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["MgA."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["Mgr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["JUDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["PhDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["RNDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["PharmDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["ThLic."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["ThDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
+        ["Ing."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "inženýre", FemaleVocRoot = "inženýrko" },
+        ["Ing"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "inženýre", FemaleVocRoot = "inženýrko" },
+        ["Ing. arch."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "architekte", FemaleVocRoot = "architektko" },
+        ["MUDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["MUDr"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["MDDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["MDDr"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["MVDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["MVDr"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["MgA."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "magistře", FemaleVocRoot = "magistro" },
+        ["MgA"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "magistře", FemaleVocRoot = "magistro" },
+        ["Mgr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "magistře", FemaleVocRoot = "magistro" },
+        ["Mgr"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "magistře", FemaleVocRoot = "magistro" },
+        ["JUDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["PhDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["RNDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["PharmDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["ThLic."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "licenciáte", FemaleVocRoot = "licenciátko" },
+        ["ThLic"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "licenciáte", FemaleVocRoot = "licenciátko" },
+        ["ThDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
         
         // Historical master degrees
-        ["akad. arch."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["ak. mal."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["ak. soch."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["MSDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["PaedDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["PhMr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["RCDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["RSDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["RTDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
-        ["ThMgr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true },
+        ["akad. arch."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "architekte", FemaleVocRoot = "architektko" },
+        ["ak. arch."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "architekte", FemaleVocRoot = "architektko" },
+        ["ak. architekt"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "architekte", FemaleVocRoot = "architektko" },
+        ["akad. architekt"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "architekte", FemaleVocRoot = "architektko" },
+        ["ak. mal."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "malíři", FemaleVocRoot = "malířko" },
+        ["akad. mal."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "malíři", FemaleVocRoot = "malířko" },
+        ["ak. malíř"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "malíři", FemaleVocRoot = "malířko" },
+        ["akad. malíř"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "malíři", FemaleVocRoot = "malířko" },
+        ["ak. soch."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "sochaři", FemaleVocRoot = "sochařko" },
+        ["akad. soch."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "sochaři", FemaleVocRoot = "sochařko" },
+        ["ak. sochař"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "sochaři", FemaleVocRoot = "sochařko" },
+        ["akad. sochař"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.HistoricMaster, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "sochaři", FemaleVocRoot = "sochařko" },
+        ["MSDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["PaedDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["PhMr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "magistře", FemaleVocRoot = "magistro" },
+        ["RCDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["RSDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["RTDr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["ThMgr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = true, Rank = SalutationRank.Academic, MaleVocRoot = "magistře", FemaleVocRoot = "magistro" },
         
         // Doctoral degrees (after name)
-        ["Ph.D."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false },
-        ["DSc."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false },
-        ["CSc."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false },
-        ["Dr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false },
-        ["DrSc."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false },
-        ["Th.D."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false },
+        ["Ph.D."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["Ph. D."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["PhD"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["DSc."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["CSc."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["Dr."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["DrSc."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["Th.D."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["Th. D."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["ThD"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Doctorate, PlacesBefore = false, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
         
         // Academic positions (before name, lowercase)
-        ["as."] = new TitleInfo { Type = TitleType.Position, PlacesBefore = true },
-        ["odb. as."] = new TitleInfo { Type = TitleType.Position, PlacesBefore = true },
-        ["doc."] = new TitleInfo { Type = TitleType.Position, PlacesBefore = true },
-        ["prof."] = new TitleInfo { Type = TitleType.Position, PlacesBefore = true },
+        ["as."] = new TitleInfo { Type = TitleType.Position, PlacesBefore = true, Rank = SalutationRank.None },
+        ["odb. as."] = new TitleInfo { Type = TitleType.Position, PlacesBefore = true, Rank = SalutationRank.None },
+        ["doc."] = new TitleInfo { Type = TitleType.Position, PlacesBefore = true, Rank = SalutationRank.AcademicPosition, MaleVocRoot = "docente", FemaleVocRoot = "docentko" },
+        ["prof."] = new TitleInfo { Type = TitleType.Position, PlacesBefore = true, Rank = SalutationRank.AcademicPosition, MaleVocRoot = "profesore", FemaleVocRoot = "profesorko" },
         
         // Non-academic titles
         ["DiS."] = new TitleInfo { Type = TitleType.Professional, PlacesBefore = false },
         
         // Honorary and ceremonial titles
-        ["dr. h. c."] = new TitleInfo { Type = TitleType.Honorary, PlacesBefore = false },
-        ["prof. h. c."] = new TitleInfo { Type = TitleType.Honorary, PlacesBefore = false },
+        ["dr. h. c."] = new TitleInfo { Type = TitleType.Honorary, PlacesBefore = false, Rank = SalutationRank.Academic, MaleVocRoot = "doktore", FemaleVocRoot = "doktorko" },
+        ["prof. h. c."] = new TitleInfo { Type = TitleType.Honorary, PlacesBefore = false, Rank = SalutationRank.AcademicPosition, MaleVocRoot = "profesore", FemaleVocRoot = "profesorko" },
         
         // International titles (common in Czech context)
-        ["MBA"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = false },
-        ["LL.M."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = false },
-        ["Jr."] = new TitleInfo { Type = TitleType.Suffix, PlacesBefore = false },
-        ["Sr."] = new TitleInfo { Type = TitleType.Suffix, PlacesBefore = false },
+        ["MBA"] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = false, Rank = SalutationRank.None },
+        ["LL.M."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = false, Rank = SalutationRank.None },
+        ["LL. M."] = new TitleInfo { Type = TitleType.Academic, Level = TitleLevel.Master, PlacesBefore = false, Rank = SalutationRank.None },
+        ["Jr."] = new TitleInfo { Type = TitleType.Suffix, PlacesBefore = false, Rank = SalutationRank.None },
+        ["Sr."] = new TitleInfo { Type = TitleType.Suffix, PlacesBefore = false, Rank = SalutationRank.None },
         
         // Military ranks - Mužstvo (Enlisted)
-        ["voj."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["svob."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["sv."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true }, // unofficial but common abbreviation
+        ["voj."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "vojíne", FemaleVocRoot = "vojínko" },
+        ["svob."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "svobodníku", FemaleVocRoot = "svobodnice" },
+        ["sv."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "svobodníku", FemaleVocRoot = "svobodnice" }, // unofficial but common abbreviation
         
         // Military ranks - Poddůstojníci (Non-commissioned officers)
-        ["des."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["čet."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["rtn."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
+        ["des."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "desátníku", FemaleVocRoot = "desátnice" },
+        ["čet."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "četaři", FemaleVocRoot = "četařko" },
+        ["rtn."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "rotný", FemaleVocRoot = "rotný" },
         
         // Military ranks - Sbor praporčíků (Warrant officers)
-        ["rtm."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["nrtm."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["prap."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["nprap."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["št. prap."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["šprap."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
+        ["rtm."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "rotmistře", FemaleVocRoot = "rotmistryně" },
+        ["nrtm."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "nadrotmistře", FemaleVocRoot = "nadrotmistryně" },
+        ["prap."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "praporčíku", FemaleVocRoot = "praporčice" },
+        ["nprap."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "nadpraporčíku", FemaleVocRoot = "nadpraporčice" },
+        ["št. prap."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "štábní praporčíku", FemaleVocRoot = "štábní praporčice" },
+        ["šprap."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "štábní praporčíku", FemaleVocRoot = "štábní praporčice" },
         
         // Military ranks - Sbor nižších důstojníků (Junior officers)
-        ["por."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["npor."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["kpt."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
+        ["por."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "poručíku", FemaleVocRoot = "poručice" },
+        ["npor."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "nadporučíku", FemaleVocRoot = "nadporučice" },
+        ["kpt."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "kapitáne", FemaleVocRoot = "kapitánko" },
         
         // Military ranks - Sbor vyšších důstojníků (Senior officers)
-        ["mjr."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["pplk."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["plk."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
+        ["mjr."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "majore", FemaleVocRoot = "majorko" },
+        ["pplk."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "podplukovníku", FemaleVocRoot = "podplukovnice" },
+        ["plk."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "plukovníku", FemaleVocRoot = "plukovnice" },
         
         // Military ranks - Sbor generálů (Generals)
-        ["brig.gen."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["genmjr."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["genpor."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
-        ["arm.gen."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true },
+        ["brig.gen."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "brigádní generále", FemaleVocRoot = "brigádní generálko" },
+        ["genmjr."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "generálmajore", FemaleVocRoot = "generálmajorko" },
+        ["genpor."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "generálporučíku", FemaleVocRoot = "generálporučice" },
+        ["arm.gen."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "armádní generále", FemaleVocRoot = "armádní generálko" },
         
         // Historical military ranks (still may appear in documents)
-        ["ppor."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true }, // podporučík (abolished 2011)
-        ["škpt."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true }, // štábní kapitán
-        ["šrtm."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true }, // štábní rotmistr (abolished 2011)
-        ["gen."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true }, // general (historical)
-        ["genplk."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true }, // generálplukovník (historical)
+        ["ppor."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "podporučíku", FemaleVocRoot = "podporučice" }, // podporučík (abolished 2011)
+        ["škpt."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "štábní kapitáne", FemaleVocRoot = "štábní kapitánko" }, // štábní kapitán
+        ["šrtm."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "štábní rotmistře", FemaleVocRoot = "štábní rotmistryně" }, // štábní rotmistr (abolished 2011)
+        ["gen."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "generále", FemaleVocRoot = "generálko" }, // general (historical)
+        ["genplk."] = new TitleInfo { Type = TitleType.Military, PlacesBefore = true, Rank = SalutationRank.Military, MaleVocRoot = "generálplukovníku", FemaleVocRoot = "generálplukovnice" }, // generálplukovník (historical)
         
         // Ecclesiastical titles - Czech Catholic Church
         ["PP."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = false }, // papež
@@ -281,31 +308,31 @@ public static class Declension
         ["Ct.p."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = false }, // ctihodný pán
         
         // International ecclesiastical titles (English/Latin)
-        ["Rev."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // reverend
-        ["Very Rev."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // very reverend
-        ["Most Rev."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // most reverend
-        ["Rt. Rev."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // right reverend
-        ["Right Rev."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // right reverend
-        ["Fr."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // father
-        ["Father"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true },
-        ["Sister"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // when clearly religious context
-        ["Br."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // brother
-        ["Brother"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true },
-        ["Dcn."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // deacon
-        ["Deacon"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true },
-        ["Bp."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // bishop
-        ["Bishop"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true },
-        ["Abp."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // archbishop
-        ["Archbishop"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true },
-        ["Msgr."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // monsignor
-        ["Monsignor"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true },
-        ["Card."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // cardinal
-        ["Cardinal"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true },
-        ["Dom"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // dom (monastic)
-        ["Abbot"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true },
-        ["Mother"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true }, // mother superior
-        ["Pastor"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true },
-        ["Padre"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true },
+        ["Rev."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "reverende", FemaleVocRoot = "reverendko" },
+        ["Very Rev."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "reverende", FemaleVocRoot = "reverendko" },
+        ["Most Rev."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "reverende", FemaleVocRoot = "reverendko" },
+        ["Rt. Rev."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "reverende", FemaleVocRoot = "reverendko" },
+        ["Right Rev."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "reverende", FemaleVocRoot = "reverendko" },
+        ["Fr."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "otče", FemaleVocRoot = null },
+        ["Father"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "otče", FemaleVocRoot = null },
+        ["Sister"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = null, FemaleVocRoot = "sestro" },
+        ["Br."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "bratře", FemaleVocRoot = null },
+        ["Brother"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "bratře", FemaleVocRoot = null },
+        ["Dcn."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "jáhne", FemaleVocRoot = "jáhenko" },
+        ["Deacon"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "jáhne", FemaleVocRoot = "jáhenko" },
+        ["Bp."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "biskupe", FemaleVocRoot = "biskupko" },
+        ["Bishop"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "biskupe", FemaleVocRoot = "biskupko" },
+        ["Abp."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "arcibiskupe", FemaleVocRoot = "arcibiskupko" },
+        ["Archbishop"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "arcibiskupe", FemaleVocRoot = "arcibiskupko" },
+        ["Msgr."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "monsignore", FemaleVocRoot = "monsignorko" },
+        ["Monsignor"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "monsignore", FemaleVocRoot = "monsignorko" },
+        ["Card."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "kardinále", FemaleVocRoot = "kardinálko" },
+        ["Cardinal"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "kardinále", FemaleVocRoot = "kardinálko" },
+        ["Dom"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "dome", FemaleVocRoot = null },
+        ["Abbot"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "opate", FemaleVocRoot = "abatyše" },
+        ["Mother"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = null, FemaleVocRoot = "matko" },
+        ["Pastor"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "pastore", FemaleVocRoot = "pastore" },
+        ["Padre"] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = true, Rank = SalutationRank.Ecclesiastical, MaleVocRoot = "otče", FemaleVocRoot = null },
         
         // Common ecclesiastical postnominals  
         ["V.G."] = new TitleInfo { Type = TitleType.Ecclesiastical, PlacesBefore = false }, // vicar general
@@ -331,6 +358,7 @@ public static class Declension
     private enum TitleLevel
     {
         Bachelor,
+        HistoricMaster, // e.g., akad. arch., ak. mal., ak. soch. — between Bachelor and Master
         Master,
         Doctorate
     }
@@ -342,14 +370,29 @@ public static class Declension
         Feminine
     }
 
-    private class TitleInfo
+    enum SalutationRank
     {
-        public TitleType Type { get; init; }
+        None, 
+        Academic,
+        AcademicPosition, 
+        Ecclesiastical,
+        Military
+    }
+
+    private sealed class TitleInfo
+    {
+        public required TitleType Type { get; init; }
         public TitleLevel? Level { get; init; }
         public TitleGender Gender { get; init; } = TitleGender.Neutral;
         public bool PlacesBefore { get; init; }
+        // NEW: vocative roots and salutation behaviour
+        public string? MaleVocRoot { get; init; }
+        public string? FemaleVocRoot { get; init; }
+        public SalutationRank Rank { get; init; } = SalutationRank.None;
         public string? VocativeMale { get; init; }
         public string? VocativeFemale { get; init; }
+        public string? VocativeRoot { get; init; }
+        public bool OverridesName { get; init; }
     }
 
     private class ParsedTitles
@@ -416,18 +459,27 @@ public static class Declension
                                                   i + 2 < input.Length && char.IsUpper(input[i + 2]);
                     bool isEndOfString = i + 1 >= input.Length;
 
-                    // Check for known title when dot is followed by uppercase/digit immediately
+                    // Check for known dotted abbreviation like "Ph.D." by scanning forward
                     if (nextIsUpperOrDigit)
                     {
-                        string candidate = sb.ToString() + ".";
-                        if (!string.IsNullOrEmpty(sb.ToString()) && KnownTitles.ContainsKey(candidate))
+                        int j = i + 1;
+                        string abbrev = sb.ToString() + ".";
+                        while (j < input.Length && (char.IsLetter(input[j]) || input[j] == '.'))
                         {
-                            sb.Append('.');
+                            abbrev += input[j];
+                            j++;
+                        }
+                        if (!string.IsNullOrEmpty(sb.ToString()) && KnownTitles.ContainsKey(abbrev))
+                        {
+                            sb.Clear();
+                            sb.Append(abbrev);
+                            i = j - 1;
                             Flush();
                             continue;
                         }
 
-                        // Not a known title: treat dot as separator and don't include it in token
+                        // Fallback: keep dot with the current token and flush
+                        sb.Append('.');
                         Flush();
                         continue;
                     }
@@ -1128,7 +1180,7 @@ public static class Declension
         string declinedOutput = InferDeclensionResult(tokens, @case, detectedGender, entityType, options, input);
 
         // Reconstruct final output with titles if not omitted
-        string finalOutput = ReconstructOutput(parsedTitles, declinedOutput, @case, detectedGender, options);
+        string finalOutput = ReconstructOutput(parsedTitles, declinedOutput, @case, detectedGender, options, entityType);
 
         string? explanation = null;
         if (options.Explain)
@@ -1254,9 +1306,76 @@ public static class Declension
         return MatchCasing(token.Original, ruleResult);
     }
 
-    private static string ReconstructOutput(ParsedTitles parsedTitles, string declinedContent, CzechCase @case, DetectedGender gender, DeclensionOptions options)
+    private static string ReconstructOutput(ParsedTitles parsedTitles, string declinedContent, CzechCase @case, DetectedGender gender, DeclensionOptions options, DetectedEntityType entityType)
     {
         List<string> parts = new List<string>();
+
+        // Salutation overrides (companies and title-based), only in vocative and when not disabled
+        if (@case == CzechCase.Vocative && !options.DisableTitleSalutation)
+        {
+            // Company salutation override
+            if (entityType == DetectedEntityType.Company)
+            {
+                string company = options.CustomCompanySalutationPrefix ?? "vážení";
+                return company;
+            }
+
+            // Title-based override: select highest-rank overriding title (consider both before/after)
+            if (parsedTitles.BeforeTitles.Count > 0 || parsedTitles.AfterTitles.Count > 0)
+            {
+                TitleInfo? best = null;
+                int bestLevelScore = -1; // Doctorate > Master > HistoricMaster > Bachelor > None
+
+                static int LevelScore(TitleLevel? level) => level switch
+                {
+                    TitleLevel.Doctorate => 4,
+                    TitleLevel.Master => 3,
+                    TitleLevel.HistoricMaster => 2,
+                    TitleLevel.Bachelor => 1,
+                    _ => 0
+                };
+
+                IEnumerable<string> allTitles = parsedTitles.BeforeTitles.Concat(parsedTitles.AfterTitles);
+
+                // Prefer any doctorate-level overriding titles if present
+                List<TitleInfo> candidates = new List<TitleInfo>();
+                foreach (string t in allTitles)
+                {
+                    if (KnownTitles.TryGetValue(t, out TitleInfo? info) && info.Rank != SalutationRank.None)
+                        candidates.Add(info);
+                }
+
+                if (candidates.Count > 0)
+                {
+                    // Filter to doctorate first if any
+                    var doctorate = candidates.Where(ci => ci.Level == TitleLevel.Doctorate).ToList();
+                    var pool = doctorate.Count > 0 ? doctorate : candidates;
+
+                    foreach (TitleInfo info in pool)
+                    {
+                        int levelScore = LevelScore(info.Level);
+                        if (best == null || info.Rank > best.Rank || (info.Rank == best.Rank && levelScore > bestLevelScore))
+                        {
+                            best = info;
+                            bestLevelScore = levelScore;
+                        }
+                    }
+
+                    if (best != null)
+                    {
+                        string prefix = gender == DetectedGender.Feminine
+                            ? (options.CustomFemaleSalutationPrefix ?? "paní ")
+                            : (options.CustomMaleSalutationPrefix ?? "pane ");
+
+                        string? root = gender == DetectedGender.Feminine ? best.FemaleVocRoot : best.MaleVocRoot;
+                        if (!string.IsNullOrEmpty(root))
+                        {
+                            return prefix + root;
+                        }
+                    }
+                }
+            }
+        }
 
         // Add "before" titles (salutations, academic titles, positions)
         if (parsedTitles.BeforeTitles.Count > 0 && !options.OmitTitles)
