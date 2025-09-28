@@ -1230,8 +1230,8 @@ public static class VokativRulesFromPython
         // Try suffixes from longest to shortest - CRITICAL for accuracy
         for (int suffixLength = name.Length; suffixLength > 0; suffixLength--)
         {
-            var suffix = name.Substring(name.Length - suffixLength);
-            if (suffixes.TryGetValue(suffix, out var replacement))
+            string suffix = name.Substring(name.Length - suffixLength);
+            if (suffixes.TryGetValue(suffix, out string? replacement))
             {
                 return (suffix, replacement);
             }
@@ -1256,13 +1256,13 @@ public static class VokativRulesFromPython
     public static string TransformMasculineVocative(string name, bool isLastName)
     {
         if (string.IsNullOrEmpty(name)) return name;
-        var normalizedName = name.ToLowerInvariant();
-        var (suffix, replacementRaw) = GetMatchingSuffix(normalizedName, MasculineVocativeRules);
-        var replacement = ApplyCzechRAlternationRule(normalizedName, suffix, replacementRaw);
-        var stem = normalizedName.Substring(0, normalizedName.Length - suffix.Length);
-        var provisional = stem + replacement;
+        string normalizedName = name.ToLowerInvariant();
+        (string suffix, string replacementRaw) = GetMatchingSuffix(normalizedName, MasculineVocativeRules);
+        string replacement = ApplyCzechRAlternationRule(normalizedName, suffix, replacementRaw);
+        string stem = normalizedName.Substring(0, normalizedName.Length - suffix.Length);
+        string provisional = stem + replacement;
 
-        var adjusted = AdjustMovableVowelHeuristics(normalizedName, suffix, replacement, provisional, isLastName);
+        string adjusted = AdjustMovableVowelHeuristics(normalizedName, suffix, replacement, provisional, isLastName);
         return ApplyCasing(name, adjusted);
     }
 
@@ -1305,9 +1305,9 @@ public static class VokativRulesFromPython
         // Handle -ek → ku vs eku (movable 'e')
         if (originalLower.EndsWith("ek", StringComparison.Ordinal) && replacement == "ku")
         {
-            var stemWithoutEk = originalLower.Substring(0, originalLower.Length - 2);
+            string stemWithoutEk = originalLower.Substring(0, originalLower.Length - 2);
             // Only keep 'e' if removing it creates a ≥2 consonant cluster
-            var clusterLen = CountTrailingConsonants(stemWithoutEk.AsSpan());
+            int clusterLen = CountTrailingConsonants(stemWithoutEk.AsSpan());
             if (clusterLen >= 2)
             {
                 adjusted = stemWithoutEk + "eku";
@@ -1317,9 +1317,9 @@ public static class VokativRulesFromPython
         // Handle -el cases where rules removed 'e' (…le). For surnames prefer keeping 'e': …ele
         if (originalLower.EndsWith("el", StringComparison.Ordinal))
         {
-            var stemWithoutEl = originalLower.Substring(0, originalLower.Length - 2);
-            var withoutE = stemWithoutEl + "le";
-            var withE = stemWithoutEl + "ele";
+            string stemWithoutEl = originalLower.Substring(0, originalLower.Length - 2);
+            string withoutE = stemWithoutEl + "le";
+            string withE = stemWithoutEl + "ele";
 
             if (string.Equals(adjusted, withoutE, StringComparison.Ordinal))
             {
@@ -1330,7 +1330,7 @@ public static class VokativRulesFromPython
                 else
                 {
                     // For first names, keep withoutE unless it creates a 3-consonant cluster
-                    var clusterLen = CountTrailingConsonants(stemWithoutEl.AsSpan());
+                    int clusterLen = CountTrailingConsonants(stemWithoutEl.AsSpan());
                     if (clusterLen >= 3)
                     {
                         adjusted = withE;
@@ -1347,7 +1347,7 @@ public static class VokativRulesFromPython
         // Handle -ec → če vs ci/ieci (foreign/short stems)
         if (originalLower.EndsWith("ec", StringComparison.Ordinal) && replacement == "če")
         {
-            var stemWithoutEc = originalLower.Substring(0, originalLower.Length - 2);
+            string stemWithoutEc = originalLower.Substring(0, originalLower.Length - 2);
 
             bool HasPolishCues(string s) => s.Contains("sz") || s.Contains("cz") || s.Contains("rz") || s.Contains('w') || s.Contains("ie");
 
@@ -1398,7 +1398,7 @@ public static class VokativRulesFromPython
     {
         if (string.IsNullOrEmpty(name)) return name;
         
-        var normalizedName = name.ToLowerInvariant();
+        string normalizedName = name.ToLowerInvariant();
         string result;
         
         if (normalizedName.EndsWith("a"))
@@ -1424,7 +1424,7 @@ public static class VokativRulesFromPython
         if (string.IsNullOrEmpty(name)) return name;
         
         // For feminine surnames, apply diacritic restoration for common patterns
-        var result = RestoreFeminineSurnameDiacritics(name);
+        string result = RestoreFeminineSurnameDiacritics(name);
         
         // Apply proper casing
         return ApplyCasing(name, result);
@@ -1436,7 +1436,7 @@ public static class VokativRulesFromPython
     /// </summary>
     public static string RestoreFeminineSurnameDiacritics(string name)
     {
-        var normalized = name.ToLowerInvariant();
+        string normalized = name.ToLowerInvariant();
         
         // If the name already contains diacritics, don't change it
         // The user input with diacritics is likely the correct form
@@ -1480,8 +1480,8 @@ public static class VokativRulesFromPython
     {
         if (string.IsNullOrEmpty(name)) return DetectedGender.Ambiguous;
         
-        var normalizedName = name.ToLowerInvariant();
-        var (_, gender) = GetMatchingSuffix(normalizedName, GenderDetectionRules);
+        string normalizedName = name.ToLowerInvariant();
+        (_, string gender) = GetMatchingSuffix(normalizedName, GenderDetectionRules);
         
         return gender switch
         {
@@ -1498,8 +1498,8 @@ public static class VokativRulesFromPython
     {
         if (string.IsNullOrEmpty(name)) return false;
         
-        var normalizedName = name.ToLowerInvariant();
-        var (_, nameType) = GetMatchingSuffix(normalizedName, WomanNameTypeRules);
+        string normalizedName = name.ToLowerInvariant();
+        (_, string nameType) = GetMatchingSuffix(normalizedName, WomanNameTypeRules);
         
         return nameType == "l"; // 'l' means last name, 'f' means first name
     }
@@ -1519,16 +1519,16 @@ public static class VokativRulesFromPython
             return replacement;
 
         // Find the character immediately before 'r' in the matched suffix within the original word
-        var suffixStartPosition = word.Length - matchedSuffix.Length;
-        var rPositionInSuffix = matchedSuffix.LastIndexOf('r');
-        var rPositionInWord = suffixStartPosition + rPositionInSuffix;
+        int suffixStartPosition = word.Length - matchedSuffix.Length;
+        int rPositionInSuffix = matchedSuffix.LastIndexOf('r');
+        int rPositionInWord = suffixStartPosition + rPositionInSuffix;
         
         // Check if there's a character before the 'r' in the original word
         if (rPositionInWord <= 0)
             return replacement; // r is at the beginning, use default
 
         // Get the character immediately before 'r' in the original word
-        var charBeforeR = word[rPositionInWord - 1];
+        char charBeforeR = word[rPositionInWord - 1];
 
         // Check if it's a consonant or vowel
         bool isVowel = "aeiouyáéěíóúůý".Contains(charBeforeR);
@@ -1537,7 +1537,7 @@ public static class VokativRulesFromPython
         // If the character before 'r' is 'j' and the character before 'j' is a vowel, prefer 're'
         if (!isVowel && charBeforeR == 'j' && rPositionInWord - 1 > 0)
         {
-            var charBeforeJ = word[rPositionInWord - 2];
+            char charBeforeJ = word[rPositionInWord - 2];
             if ("aeiouyáéěíóúůý".Contains(charBeforeJ))
             {
                 isVowel = true;

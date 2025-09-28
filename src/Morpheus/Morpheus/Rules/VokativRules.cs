@@ -14,7 +14,7 @@ public static class VokativRules
         if (string.IsNullOrEmpty(input)) return input;
         
         // Default behavior when context is not available - use Python gender detection
-        var detectedGender = VokativRulesFromPython.DetectGender(input);
+        DetectedGender detectedGender = VokativRulesFromPython.DetectGender(input);
         
         if (detectedGender == DetectedGender.Feminine)
         {
@@ -74,13 +74,13 @@ public static class VokativRules
     /// </summary>
     public static string TransformLegacy(string input)
     {
-        var output = new List<string>();
-        var names = input.Contains(" ") ? input.Split(' ', StringSplitOptions.RemoveEmptyEntries) : new[] { input };
+        List<string> output = new List<string>();
+        string[] names = input.Contains(" ") ? input.Split(' ', StringSplitOptions.RemoveEmptyEntries) : new[] { input };
 
-        foreach (var jmeno in names)
+        foreach (string jmeno in names)
         {
-            var ljmeno = " " + jmeno.ToLowerInvariant();
-            var c = ljmeno[^1];
+            string ljmeno = " " + jmeno.ToLowerInvariant();
+            char c = ljmeno[^1];
             (string oldEnd, string newEnd) replacepair;
 
             switch (c)
@@ -162,7 +162,7 @@ public static class VokativRules
                         case 'l':
                             if (ljmeno[^3] == 'l')
                             {
-                                var c4 = ljmeno[^4];
+                                char c4 = ljmeno[^4];
                                 replacepair = c4 == 'e' ? ("e", "o") : (c4 == 'o' ? ("", "") : ("e", "i"));
                             }
                             else replacepair = ("", "");
@@ -187,7 +187,7 @@ public static class VokativRules
                                     }
                                     break;
                                 case 'l':
-                                    var c4 = ljmeno[^4];
+                                    char c4 = ljmeno[^4];
                                     replacepair = c4 == 'u' ? (ljmeno[^5] == 'j' ? ("", "i") : ("s", "")) : ((c4 == 'o' || c4 == 'r') ? ("", "i") : ("s", ""));
                                     break;
                                 case 'r': replacepair = ljmeno[^4] == 'e' ? ("s", "ro") : ("", "i"); break;
@@ -201,31 +201,31 @@ public static class VokativRules
                             }
                             break;
                         case 'i':
-                            var c3i = ljmeno[^3];
+                            char c3i = ljmeno[^3];
                             if (c3i == 'r')
                                 replacepair = ljmeno[^4] == 'a' ? (ljmeno[^5] == 'p' ? ("s", "de") : ("s", "to")) : ("", "i");
                             else if (c3i == 'n') replacepair = ljmeno[^4] == 'f' ? ("s", "de") : ("", "i");
                             else replacepair = c3i == 'm' ? ("s", "do") : ("", "i");
                             break;
                         case 'o':
-                            var c3o = ljmeno[^3];
+                            char c3o = ljmeno[^3];
                             if (c3o == 'm') replacepair = ljmeno[^4] == 'i' ? ("os", "e") : ("", "i");
                             else if (c3o == 'k') replacepair = ("", "e");
                             else if (c3o == 'x') replacepair = ("os", "i");
                             else replacepair = ("os", "e");
                             break;
                         case 'a':
-                            var c3a = ljmeno[^3];
+                            char c3a = ljmeno[^3];
                             if (c3a == 'r') replacepair = ljmeno[^4] == 'a' ? ("", "i") : ("as", "e");
                             else if (c3a == 'l') replacepair = ljmeno[^4] == 'l' ? ("s", "do") : ("", "i");
                             else replacepair = c3a == 'y' ? ("as", "e") : ("", "i");
                             break;
                         case 'r': replacepair = ljmeno[^3] == 'a' ? ("s", "te") : ("", "i"); break;
                         case 'u':
-                            var c3u = ljmeno[^3];
+                            char c3u = ljmeno[^3];
                             if (c3u == 'n')
                             {
-                                var c4u = ljmeno[^4];
+                                char c4u = ljmeno[^4];
                                 replacepair = c4u == 'e' ? (ljmeno[^5] == 'v' ? ("us", "ero") : ("", "i")) : (c4u == 'g' ? ("", "i") : ("us", "e"));
                             }
                             else if (c3u == 'e') replacepair = ljmeno[^4] == 'z' ? ("zeus", "die") : ("us", "e");
@@ -242,60 +242,60 @@ public static class VokativRules
                 case 'o': replacepair = ljmeno[^2] == 'l' ? ("", "i") : ("", ""); break;
                 case 'x': replacepair = ljmeno[^2] == 'n' ? ("x", "go") : ("", "i"); break;
                 case 'i':
-                    var c2i = ljmeno[^2];
+                    char c2i = ljmeno[^2];
                     if (c2i == 'n') replacepair = ljmeno[^4] == 'e' ? ("", "") : ("", "o");
                     else if (c2i == 'm') replacepair = ljmeno[^3] == 'a' ? ("", "") : ("", "o");
                     else if (c2i == 'r') replacepair = ljmeno[^3] == 'i' ? ("", "o") : ("", "");
                     else replacepair = (c2i == 's' || c2i == 'a' || c2i == 'o' || c2i == 'c' || c2i == 't') ? ("", "i") : ("", "");
                     break;
                 case 't':
-                    var c2t = ljmeno[^2];
+                    char c2t = ljmeno[^2];
                     if (c2t == 'i') replacepair = ljmeno[^3] == 'l' ? ("", "e") : ("", "");
                     else if (c2t == 'u') replacepair = ljmeno[^3] == 'r' ? ("", "") : ("", "e");
                     else replacepair = ("", "e");
                     break;
                 case 'r':
-                    var c2r = ljmeno[^2];
+                    char c2r = ljmeno[^2];
                     if (c2r == 'e')
                     {
-                        var c3r = ljmeno[^3];
+                        char c3r = ljmeno[^3];
                         if (c3r == 'd') replacepair = ljmeno[^4] == 'i' ? (ljmeno[^5] == 'e' ? ("", "e") : ("", "i")) : ("er", "re");
                         else if (c3r == 't')
                         {
-                            var c4r = ljmeno[^4];
+                            char c4r = ljmeno[^4];
                             replacepair = c4r == 'e' ? (ljmeno[^5] == 'p' ? ("", "e") : ("", "o")) : (c4r == 's' ? (ljmeno[^5] == 'o' ? ("", "e") : ("", "")) : (c4r == 'n' ? ("", "i") : ("", "e")));
                         }
                         else replacepair = (c3r == 'g' || c3r == 'k') ? ("er", "ře") : ("", "e");
                     }
                     else if (c2r == 'a')
                     {
-                        var c3r = ljmeno[^3];
+                        char c3r = ljmeno[^3];
                         replacepair = c3r == 'm' ? (ljmeno[^4] == 'g' ? ("", "") : ("", "e")) : (c3r == 'l' ? (ljmeno[^5] == 'p' ? ("", "") : ("", "e")) : ("", "e"));
                     }
                     else if (c2r == 'o') replacepair = ljmeno[^3] == 'n' ? ("", "o") : ("", "e");
                     else replacepair = (c2r == 'd' || c2r == 't' || c2r == 'b') ? ("r", "ře") : ("", "e");
                     break;
                 case 'j':
-                    var c2j = ljmeno[^2];
+                    char c2j = ljmeno[^2];
                     if (c2j == 'o') replacepair = ljmeno[^3] == 't' ? ("oj", "ý") : ("", "i");
                     else if (c2j == 'i') replacepair = ljmeno[^3] == 'd' ? ("", "i") : ("ij", "ý");
                     else replacepair = c2j == 'y' ? ("yj", "ý") : ("", "i");
                     break;
                 case 'd':
-                    var c2d = ljmeno[^2];
+                    char c2d = ljmeno[^2];
                     if (c2d == 'i') replacepair = ljmeno[^3] == 'r' ? ("", "") : ("", "e");
                     else if (c2d == 'u') replacepair = ljmeno[^3] == 'a' ? ("", "") : ("", "e");
                     else replacepair = ("", "e");
                     break;
                 case 'y':
-                    var c2y = ljmeno[^2];
+                    char c2y = ljmeno[^2];
                     replacepair = (c2y == 'a' || c2y == 'g' || c2y == 'o') ? ("", "i") : ("", "");
                     break;
                 case 'h':
-                    var c2h = ljmeno[^2];
+                    char c2h = ljmeno[^2];
                     if (c2h == 'c')
                     {
-                        var c3h = ljmeno[^3];
+                        char c3h = ljmeno[^3];
                         replacepair = c3h == 'r' ? ("", "i") : (c3h == 'ý' ? ("", "") : ("", "u"));
                     }
                     else if (c2h == 't') replacepair = ljmeno[^3] == 'e' ? ("", "e") : ("", "i");
@@ -305,7 +305,7 @@ public static class VokativRules
                 case 'v': replacepair = ljmeno[^2] == 'ů' ? ("", "") : ("", "e"); break;
                 case 'u': replacepair = ljmeno[^2] == 't' ? ("", "") : ("", "i"); break;
                 case 'k':
-                    var c2k = ljmeno[^2];
+                    char c2k = ljmeno[^2];
                     replacepair = c2k == 'ě' ? (ljmeno[^3] == 'n' ? ("něk", "ňku") : ("k", "če")) : (c2k == 'e' ? ("ek", "ku") : ("", "u"));
                     break;
                 case 'g': replacepair = ljmeno[^2] == 'i' ? (ljmeno[^3] == 'e' ? ("", "") : ("", "u")) : ("", "u"); break;
@@ -338,7 +338,7 @@ public static class VokativRules
             }
             else
             {
-                var replaceending = jmeno.Substring(jmeno.Length - replacepair.oldEnd.Length);
+                string replaceending = jmeno.Substring(jmeno.Length - replacepair.oldEnd.Length);
                 if (replaceending.ToUpperInvariant() == replaceending)
                     outName = jmeno.Substring(0, jmeno.Length - replacepair.oldEnd.Length) + replacepair.newEnd.ToUpperInvariant();
                 else if (System.Text.RegularExpressions.Regex.IsMatch(replaceending, @"^[A-ZÁČĎÉÍŇÓŘŠŤÚŮÝŽ][a-záčďéěíňóřšťúůýž]*$"))

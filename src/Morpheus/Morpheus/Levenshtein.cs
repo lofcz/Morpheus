@@ -149,8 +149,8 @@ public class BKTree
     // ================== SAVE TO FILE (flat) ==================
     public void SaveToFile(string path)
     {
-        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write);
-        using var writer = new BinaryWriter(stream, Encoding.UTF8);
+        using FileStream stream = new FileStream(path, FileMode.Create, FileAccess.Write);
+        using BinaryWriter writer = new BinaryWriter(stream, Encoding.UTF8);
         
         if (_root == null) 
         {
@@ -163,14 +163,14 @@ public class BKTree
         }
         
         // Build flat lists
-        var nodes = new List<FlatNode>();
-        var edges = new List<FlatEdge>();
-        var utf8 = new List<byte>();
+        List<FlatNode> nodes = new List<FlatNode>();
+        List<FlatEdge> edges = new List<FlatEdge>();
+        List<byte> utf8 = new List<byte>();
 
         int AddNodeRecursive(Node n)
         {
             int nameOfs = utf8.Count;
-            var nameBytes = Encoding.UTF8.GetBytes(n.Data.Name);
+            byte[] nameBytes = Encoding.UTF8.GetBytes(n.Data.Name);
             utf8.AddRange(nameBytes);
             ushort nameLen = (ushort)nameBytes.Length;
 
@@ -179,8 +179,8 @@ public class BKTree
             nodes.Add(new FlatNode(nameOfs, nameLen, -1, 0, n.Data.Role, genderTag, male, female));
             int currentIdx = nodes.Count - 1;
 
-            var localEdges = new List<FlatEdge>();
-            foreach (var kvp in n.Children)
+            List<FlatEdge> localEdges = new List<FlatEdge>();
+            foreach (KeyValuePair<int, Node> kvp in n.Children)
             {
                 byte dist = (byte)kvp.Key;
                 int childIdx = AddNodeRecursive(kvp.Value);
@@ -203,10 +203,10 @@ public class BKTree
         byte[] edgesBytes;
         byte[] blobBytes = utf8.ToArray();
 
-        using (var ms = new MemoryStream())
-        using (var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
+        using (MemoryStream ms = new MemoryStream())
+        using (BinaryWriter bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
         {
-            foreach (var fn in nodes)
+            foreach (FlatNode fn in nodes)
             {
                 bw.Write(fn.NameOffset);
                 bw.Write(fn.NameLength);
@@ -221,10 +221,10 @@ public class BKTree
             nodesBytes = ms.ToArray();
         }
 
-        using (var ms = new MemoryStream())
-        using (var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
+        using (MemoryStream ms = new MemoryStream())
+        using (BinaryWriter bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
         {
-            foreach (var e in edges)
+            foreach (FlatEdge e in edges)
             {
                 bw.Write(e.Distance);
                 bw.Write(e.ChildIndex);
@@ -236,17 +236,17 @@ public class BKTree
         // Compress sections with Deflate (Fastest)
         static byte[] DeflateFast(byte[] data)
         {
-            using var outMs = new MemoryStream();
-            using (var ds = new DeflateStream(outMs, new CompressionLevel?(CompressionLevel.Fastest).Value, leaveOpen: true))
+            using MemoryStream outMs = new MemoryStream();
+            using (DeflateStream ds = new DeflateStream(outMs, new CompressionLevel?(CompressionLevel.Fastest).Value, leaveOpen: true))
             {
                 ds.Write(data, 0, data.Length);
             }
             return outMs.ToArray();
         }
 
-        var nodesCompressed = DeflateFast(nodesBytes);
-        var edgesCompressed = DeflateFast(edgesBytes);
-        var blobCompressed  = DeflateFast(blobBytes);
+        byte[] nodesCompressed = DeflateFast(nodesBytes);
+        byte[] edgesCompressed = DeflateFast(edgesBytes);
+        byte[] blobCompressed  = DeflateFast(blobBytes);
 
         // --- write header ---
         writer.Write("BKTREE03");
@@ -285,11 +285,11 @@ public class BKTree
     // ================== LOAD FROM FILE (flat) ==================
     public static BKTree LoadFromFile(string path)
     {
-        var tree = new BKTree();
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        using var reader = new BinaryReader(stream, Encoding.UTF8);
+        BKTree tree = new BKTree();
+        using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using BinaryReader reader = new BinaryReader(stream, Encoding.UTF8);
         
-        var header = reader.ReadString();
+        string header = reader.ReadString();
         int flags = reader.ReadByte();
         int nodeCount = reader.ReadInt32();
         int edgeCount = reader.ReadInt32();
@@ -311,10 +311,10 @@ public class BKTree
 
             static byte[] InflateExact(BinaryReader br, int compLen, int rawLen)
             {
-                var comp = br.ReadBytes(compLen);
-                using var inMs = new MemoryStream(comp);
-                using var ds = new DeflateStream(inMs, CompressionMode.Decompress);
-                var raw = new byte[rawLen];
+                byte[] comp = br.ReadBytes(compLen);
+                using MemoryStream inMs = new MemoryStream(comp);
+                using DeflateStream ds = new DeflateStream(inMs, CompressionMode.Decompress);
+                byte[] raw = new byte[rawLen];
                 int read = 0; int n;
                 while ((n = ds.Read(raw, read, raw.Length - read)) > 0) read += n;
                 return raw;
@@ -333,9 +333,9 @@ public class BKTree
         else
         {
             // Uncompressed path (legacy)
-            var nodes = new FlatNode[nodeCount];
-            var edges = new FlatEdge[edgeCount];
-            var blob  = new byte[blobLen];
+            FlatNode[] nodes = new FlatNode[nodeCount];
+            FlatEdge[] edges = new FlatEdge[edgeCount];
+            byte[] blob  = new byte[blobLen];
 
             for (int i = 0; i < nodeCount; i++)
             {
@@ -365,10 +365,10 @@ public class BKTree
         }
 
         // Parse decompressed buffers
-        var nodesArr = new FlatNode[nodeCount];
-        var edgesArr = new FlatEdge[edgeCount];
-        using (var ms = new MemoryStream(nodesBuf))
-        using (var br = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true))
+        FlatNode[] nodesArr = new FlatNode[nodeCount];
+        FlatEdge[] edgesArr = new FlatEdge[edgeCount];
+        using (MemoryStream ms = new MemoryStream(nodesBuf))
+        using (BinaryReader br = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true))
         {
             for (int i = 0; i < nodeCount; i++)
             {
@@ -383,8 +383,8 @@ public class BKTree
                 nodesArr[i] = new FlatNode(nameOfs, nameLen, firstEdge, edgeCnt, role, genderTag, male, female);
             }
         }
-        using (var ms = new MemoryStream(edgesBuf))
-        using (var br = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true))
+        using (MemoryStream ms = new MemoryStream(edgesBuf))
+        using (BinaryReader br = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true))
         {
             for (int i = 0; i < edgeCount; i++)
             {
@@ -409,15 +409,15 @@ public class BKTree
             // fallback to legacy object tree (during build time)
             return _root==null? new List<NameEntry>() : SearchLegacy(queryName,maxDistance);
         }
-        var results = new List<NameEntry>();
+        List<NameEntry> results = new List<NameEntry>();
         string normalizedQuery = Normalizer.RemoveDiacritics(queryName).ToLowerInvariant().Trim();
         if(_flatNodes.Length==0) return results;
-        var queue = new Queue<int>();
+        Queue<int> queue = new Queue<int>();
         queue.Enqueue(0); // root is 0
         while(queue.Count>0)
         {
             int idx = queue.Dequeue();
-            var node = _flatNodes[idx];
+            FlatNode node = _flatNodes[idx];
             string key = _indexKeys[idx] ??= GetIndexKey(idx);
             int dist = Levenshtein.Distance(key, normalizedQuery);
             if(dist<=maxDistance)
@@ -427,7 +427,7 @@ public class BKTree
             int first = node.FirstEdgeIndex;
             for(int e=first;e<first+node.EdgeCount;e++)
             {
-                var edge=_flatEdges[e];
+                FlatEdge edge=_flatEdges[e];
                 int d=edge.Distance;
                 if(d>=dist-maxDistance && d<=dist+maxDistance)
                     queue.Enqueue(edge.ChildIndex);
@@ -438,7 +438,7 @@ public class BKTree
 
     private NameEntry ToNameEntry(int idx)
     {
-        var n=_flatNodes[idx];
+        FlatNode n=_flatNodes[idx];
         string disp = Encoding.UTF8.GetString(_nameBlob,n.NameOffset,n.NameLength);
         GenderInfo gender = n.GenderTag switch{0=>new AndrogyneGender(n.MaleRatio/10000f,n.FemaleRatio/10000f),
                                               2=>new SimpleGender(SimpleGender.GenderType.Male),
@@ -449,23 +449,23 @@ public class BKTree
 
     private string GetIndexKey(int idx)
     {
-        var n=_flatNodes[idx];
+        FlatNode n=_flatNodes[idx];
         string disp = Encoding.UTF8.GetString(_nameBlob,n.NameOffset,n.NameLength);
         return Normalizer.RemoveDiacritics(disp).ToLowerInvariant().Trim();
     }
 
     private List<NameEntry> SearchLegacy(string query,int maxDist)
     {
-        var list=new List<NameEntry>();
+        List<NameEntry> list=new List<NameEntry>();
         if(_root==null) return list;
         string normalizedQuery = Normalizer.RemoveDiacritics(query).ToLowerInvariant().Trim();
-        var q=new Queue<Node>();q.Enqueue(_root);
+        Queue<Node> q=new Queue<Node>();q.Enqueue(_root);
         while(q.Count>0)
         {
-            var node=q.Dequeue();
+            Node node=q.Dequeue();
             int dist=Levenshtein.Distance(node.Data.IndexKey,normalizedQuery);
             if(dist<=maxDist) list.Add(node.Data);
-            foreach(var kvp in node.Children)
+            foreach(KeyValuePair<int, Node> kvp in node.Children)
             {
                 int d=kvp.Key;
                 if(d>=dist-maxDist && d<=dist+maxDist) q.Enqueue(kvp.Value);
@@ -479,8 +479,8 @@ public static class BKTreeBuilder
 {
     public static void BuildIndex(IEnumerable<NameEntry> nameEntries, string indexOutputPath)
     {
-        var tree = new BKTree();
-        foreach (var entry in nameEntries)
+        BKTree tree = new BKTree();
+        foreach (NameEntry entry in nameEntries)
         {
             tree.Add(entry);
         }
@@ -490,10 +490,10 @@ public static class BKTreeBuilder
     // CONVENIENCE: Build from combined data without JSON intermediate
     public static void BuildIndexFromCombined(Dictionary<string, CombinedItem> combined, string indexOutputPath)
     {
-        var tree = new BKTree();
-        foreach (var kvp in combined.Values)
+        BKTree tree = new BKTree();
+        foreach (CombinedItem kvp in combined.Values)
         {
-            var entry = new NameEntry(kvp.DisplayName, kvp.IndexKey, kvp.Gender, kvp.Role);
+            NameEntry entry = new NameEntry(kvp.DisplayName, kvp.IndexKey, kvp.Gender, kvp.Role);
             tree.Add(entry);
         }
         tree.SaveToFile(indexOutputPath);
@@ -648,7 +648,7 @@ internal class GenderInfoConverter : JsonConverter<GenderInfo>
     {
         if (reader.TokenType == JsonTokenType.Number)
         {
-            var genderInt = reader.GetInt32();
+            int genderInt = reader.GetInt32();
             return new SimpleGender((SimpleGender.GenderType)(genderInt));
         }
 
@@ -663,7 +663,7 @@ internal class GenderInfoConverter : JsonConverter<GenderInfo>
 
                 if (reader.TokenType == JsonTokenType.PropertyName)
                 {
-                    var propName = reader.GetString();
+                    string? propName = reader.GetString();
                     reader.Read(); // Move to value
                     if (propName == "male") maleRatio = reader.GetSingle();
                     if (propName == "female") femaleRatio = reader.GetSingle();

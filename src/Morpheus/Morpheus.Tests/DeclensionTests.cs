@@ -15,34 +15,67 @@ public class DeclensionTests
         
         var input = "Hana Skalická";
 
-        var resultGen = Morpheus.Declension.Decline(input, CzechCase.Genitive);
+        var resultGen = Declension.Decline(input, CzechCase.Genitive);
         Assert.That(resultGen.Output, Is.EqualTo("Hany Skalické"));
 
-        var resultDat = Morpheus.Declension.Decline(input, CzechCase.Dative);
+        var resultDat = Declension.Decline(input, CzechCase.Dative);
         Assert.That(resultDat.Output, Is.EqualTo("Haně Skalické"));
 
-        var resultAcc = Morpheus.Declension.Decline(input, CzechCase.Accusative);
+        var resultAcc = Declension.Decline(input, CzechCase.Accusative);
         Assert.That(resultAcc.Output, Is.EqualTo("Hanu Skalickou"));
 
-        var resultVoc = Morpheus.Declension.Decline(input, CzechCase.Vocative, new DeclensionOptions { OmitTitles = false });
+        var resultVoc = Declension.Decline(input, CzechCase.Vocative, new DeclensionOptions { OmitTitles = false });
         Assert.That(resultVoc.Output, Is.EqualTo("Hano Skalická"));
         
-        var resultLoc = Morpheus.Declension.Decline(input, CzechCase.Locative);
+        var resultLoc = Declension.Decline(input, CzechCase.Locative);
         Assert.That(resultLoc.Output, Is.EqualTo("Haně Skalické"));
 
-        var resultIns = Morpheus.Declension.Decline(input, CzechCase.Instrumental);
+        var resultIns = Declension.Decline(input, CzechCase.Instrumental);
         Assert.That(resultIns.Output, Is.EqualTo("Hanou Skalickou"));
+    }
+    
+    [Test]
+    public void Decline_JitkaBoruvka()
+    {
+        var tt = "Jitka Borůvka Danihelová";
+        var xx = Declension.Decline(tt, CzechCase.Vocative);
+        
+        Assert.That(xx.Output, Is.EqualTo("Jitko Borůvko Danihelová"));
+    }
+    
+    [Test]
+    public void Decline_SyntheticSurname_ShouldNotBorrow()
+    {
+        var s = "Jitka Borská";
+        var r = Declension.Decline(s, CzechCase.Vocative);
+        Assert.That(r.Output, Is.EqualTo("Jitko Borská"));
+    }
+    
+    [Test]
+    public void DeclineTitleWithoutSpace()
+    {
+        var s = "ing.Pavel Stupárek";
+        var r = Declension.Decline(s, CzechCase.Vocative);
+        Assert.That(r.Output, Is.EqualTo("Ing. Pavle Stupárku"));
+    }
+    
+    [Test]
+    public void DeclineNameWithComma()
+    {
+        var s = "Červenka, Michal";
+        var r = Declension.Decline(s, CzechCase.Vocative);
+        Assert.That(r.Output, Is.EqualTo("Červenko Michale"));
     }
 
     [Test]
     public void Options_OmitFirstOrLastName()
     {
         var input = "Hana Skalická";
-        var onlySurname = Morpheus.Declension.Decline(input, CzechCase.Genitive, new DeclensionOptions { OmitFirstName = true });
+        var onlySurname = Declension.Decline(input, CzechCase.Genitive, new DeclensionOptions { OmitFirstName = true });
         Assert.That(onlySurname.Output, Does.Not.Contain("Hany"));
         Assert.That(onlySurname.Output, Is.Not.Empty);
 
-        var onlyFirstName = Morpheus.Declension.Decline(input, CzechCase.Genitive, new DeclensionOptions { OmitLastName = true });
+        var onlyFirstName = Declension.Decline(input, CzechCase.Genitive, new DeclensionOptions { OmitLastName = true });
         Assert.That(onlyFirstName.Output, Does.Contain("Hany"));
         Assert.That(onlyFirstName.Output.Split(' ').Length, Is.EqualTo(1));
     }
@@ -51,7 +84,7 @@ public class DeclensionTests
     public void Company_IsDetectedAndNotDeclined()
     {
         var input = "ACME s.r.o.";
-        var res = Morpheus.Declension.Decline(input, CzechCase.Dative);
+        var res = Declension.Decline(input, CzechCase.Dative);
         Assert.That(res.EntityType, Is.EqualTo(DetectedEntityType.Company));
         Assert.That(res.Output, Is.EqualTo(input));
     }
@@ -65,7 +98,7 @@ public class DeclensionTests
         
         foreach (var (input, czechCase, expected) in testCases)
         {
-            var result = Morpheus.Declension.Decline(input, czechCase);
+            var result = Declension.Decline(input, czechCase);
             var acceptableOutputs = ParseAcceptableOutputs(expected);
             
             if (acceptableOutputs.Contains(result.Output))
@@ -191,7 +224,7 @@ public class DeclensionTests
 
     private static void AssertDeclension(string input, CzechCase czechCase, string expected)
     {
-        var result = Morpheus.Declension.Decline(input, czechCase);
+        var result = Declension.Decline(input, czechCase);
         var acceptableOutputs = ParseAcceptableOutputs(expected);
         
         if (!acceptableOutputs.Contains(result.Output))

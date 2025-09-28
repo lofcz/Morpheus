@@ -8,12 +8,12 @@ public static class InstrumentalRules
     // # S kým, s čím?
     public static string Transform(string input)
     {
-        var output = new List<string>();
-        var names = input.Contains(" ") ? input.Split(' ', StringSplitOptions.RemoveEmptyEntries) : new[] { input.ToLowerInvariant() };
+        List<string> output = new List<string>();
+        string[] names = input.Contains(" ") ? input.Split(' ', StringSplitOptions.RemoveEmptyEntries) : new[] { input.ToLowerInvariant() };
 
-        foreach (var raw in names)
+        foreach (string raw in names)
         {
-            var jmeno = raw.ToLowerInvariant();
+            string jmeno = raw.ToLowerInvariant();
             if (jmeno.Length == 0) { output.Add(raw); continue; }
 
             string result;

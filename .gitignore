@@ -9,3 +9,8 @@ src/Tools/Rnn/data/classes/sources/names/name_dataset.zip
 src/Morpheus/Morpheus.Parser/names_output.json
 /src/Tools/Rnn/data/classes/sources/names
 src/Tools/Rnn/data/classes/sources/companies/res/res_data.csv
+/src/Tools/Rnn/wandb
+/src/Tools/Rnn/__pycache__
+src/Tools/Rnn/data/classes/companies.txt
+src/Tools/Rnn/data/classes/sources/companies/companies_7m.txt
+src/Tools/Rnn/data/dataset.csv
