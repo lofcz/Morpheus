@@ -70,6 +70,7 @@ public static class VokativRulesFromPython
         ["heric"] = "herici",
         ["vanus"] = "vanusi",
         ["nnych"] = "nnychu",
+        ["ngel"] = "ngle",
         ["ppek"] = "ppku",
         ["švec"] = "šveci",
         ["spek"] = "spku",
@@ -227,6 +228,8 @@ public static class VokativRulesFromPython
         ["epek"] = "epku",
         ["óbek"] = "óbku",
         ["cbek"] = "cbku",
+        ["rál"] = "ráli",
+        ["tek"] = "tku",
         ["sch"] = "schi",
         ["vel"] = "vle",
         ["rel"] = "rle",
@@ -1115,7 +1118,7 @@ public static class VokativRulesFromPython
         ["phung"] = "l",
         ["zhang"] = "l",
         ["huong"] = "f",
-        ["guyen"] = "l",
+        ["nguyen"] = "l",
         ["ryka"] = "f",
         ["ones"] = "l",
         ["ther"] = "f",
@@ -1219,6 +1222,71 @@ public static class VokativRulesFromPython
         ["m"] = "f",
         ["y"] = "f",
         [""] = "l",
+    };
+    
+    /// <summary>
+    /// Suffix transformations for feminine first names in vocative case
+    /// Based on analysis of vocative.txt patterns and comprehensive analysis of Czech feminine names
+    /// Rules applied in order of specificity (longer matches first)
+    /// </summary>
+    private static readonly Dictionary<string, string> FeminineVocativeSuffixes = new()
+    {
+        // Special cases for -iia endings (Ukrainian/Russian names)
+        { "iia", "ije" },
+        
+        // Polish female name patterns
+        { "czka", "czko" }, // Janeczka → Janeczko (Polish diminutives)
+        { "yna", "yno" },   // Katarzyna → Katarzyno, Justyna → Justyno (Polish standard names)
+        { "ska", "sko" },   // Kowalska → Kowalsko (Polish surnames)
+        { "cka", "cko" },   // Lucka → Lucko (Polish diminutives)
+        
+        // Russian female name patterns (modern usage tends toward nominative, but traditional vocative)
+        { "ия", "ие" },     // Виктория → Викторие, Мария → Марие (Russian -ия names)
+        { "ина", "ино" },   // Екатерина → Екатерино, Галина → Галино (Russian -ина names)
+        { "ова", "ова" },   // Петрова → Петрова (Russian surnames typically unchanged in modern usage)
+        
+        // -ia endings change to -ie (Latin/foreign names)
+        { "ia", "ie" },
+        
+        // Common compound endings (specific patterns before general -a rules)
+        { "ína", "íno" },   // Karolína → Karolíno, Pavlína → Pavlíno
+        { "ika", "iko" },   // Monika → Moniko, Dominika → Dominiko, Veronika → Veroniko
+        { "ina", "ino" },   // Martina → Martino, Kateřina → Kateřino
+        { "ěna", "ěno" },   // Vladěna → Vladěno, Liběna → Liběno
+        { "eda", "edo" },   // Heda → Hedo, Alfreda → Alfredo
+        { "uše", "uše" },   // Libuše → Libuše, Miluše → Miluše (these names are invariant)
+        { "uška", "uško" }, // Maruška → Maruško, Jaruška → Jaruško (diminutives)
+        { "ška", "ško" },   // Eliška → Eliško, Miška → Miško (diminutives)
+        { "čka", "čko" },   // Kačka → Kačko, Anička → Aničko (diminutives)
+        { "enka", "enko" }, // Lenka → Lenko, Zdenka → Zdenko (diminutives)
+        { "ula", "ulo" },   // Vendula → Vendulo, Paula → Paulo 
+        { "ela", "elo" },   // Gabriela → Gabrielo, Daniela → Danielo
+        
+        // Standard -a endings change to -o (most common Czech pattern)
+        { "ka", "ko" },
+        { "na", "no" },
+        { "ta", "to" },
+        { "ra", "ro" },
+        { "la", "lo" },
+        { "da", "do" },
+        { "sa", "so" },
+        { "va", "vo" },
+        { "ba", "bo" },
+        { "pa", "po" },
+        { "ma", "mo" },
+        { "ga", "go" },
+        { "ča", "čo" },
+        { "ňa", "ňo" },
+        { "ša", "šo" },
+        { "ža", "žo" },
+        { "a", "o" },     // fallback for any other -a ending
+        
+        // Invariant endings (no change in vocative)
+        { "ice", "ice" }, // Alice → Alice (names ending in -ice)
+        { "ie", "ie" },   // Marie, Lucie, Sylvie → no change
+        { "e", "e" },     // Most other -e endings remain unchanged
+        { "y", "y" },     // Vendy, Lucy, Niky → no change (diminutives and foreign names)
+        { "ová", "ová" }  // Surnames ending in -ová typically don't change in vocative
     };
 
     /// <summary>
@@ -1391,27 +1459,40 @@ public static class VokativRulesFromPython
     }
 
     /// <summary>
-    /// Transform a feminine first name to vocative using the Python vokativ rules
-    /// Simple rule: if ends with 'a', change to 'o', otherwise unchanged
+    /// Transform a feminine first name to vocative using comprehensive suffix rules
     /// </summary>
     public static string TransformFeminineFirstName(string name)
     {
         if (string.IsNullOrEmpty(name)) return name;
         
         string normalizedName = name.ToLowerInvariant();
-        string result;
         
-        if (normalizedName.EndsWith("a"))
+        // Names ending in consonant, -e, -i, -y usually don't change
+        if (normalizedName.Length > 0)
         {
-            result = normalizedName.Substring(0, normalizedName.Length - 1) + "o";
-        }
-        else
-        {
-            result = normalizedName;
+            char lastChar = normalizedName[normalizedName.Length - 1];
+            if (lastChar == 'e' || lastChar == 'i' || lastChar == 'y' || 
+                !IsVowel(lastChar))
+            {
+                return ApplyCasing(name, normalizedName);
+            }
         }
         
-        // Preserve original casing
-        return ApplyCasing(name, result);
+        // Try to match suffixes from longest to shortest
+        foreach (var suffix in FeminineVocativeSuffixes.Keys.OrderByDescending(k => k.Length))
+        {
+            if (normalizedName.EndsWith(suffix))
+            {
+                string stem = normalizedName.Substring(0, normalizedName.Length - suffix.Length);
+                string newSuffix = FeminineVocativeSuffixes[suffix];
+                string result = stem + newSuffix;
+                
+                return ApplyCasing(name, result);
+            }
+        }
+        
+        // Default: no change
+        return ApplyCasing(name, normalizedName);
     }
 
     /// <summary>
@@ -1431,25 +1512,112 @@ public static class VokativRulesFromPython
     }
 
     /// <summary>
-    /// Restore diacritics for feminine surnames based on suffix rules
-    /// Only restore diacritics if the input doesn't already contain them
+    /// Restore diacritics for feminine surnames with smart ending-specific detection
+    /// Handles cases where surname has diacritics in stem but not in ending (e.g., "Konvična")
     /// </summary>
     public static string RestoreFeminineSurnameDiacritics(string name)
     {
         string normalized = name.ToLowerInvariant();
         
-        // If the name already contains diacritics, don't change it
-        // The user input with diacritics is likely the correct form
-        if (ContainsDiacritics(name))
+        // Check if the ENDING already has correct Czech feminine diacritics
+        if (HasCorrectFeminineEnding(normalized))
         {
-            return normalized;
+            return normalized; // Ending is already correct
         }
         
-        // Only restore diacritics for names without any diacritics
-        // Simple suffix-based rules for common Czech feminine surname endings
-        if (normalized.EndsWith("va"))
+        // Apply Czech feminine surname ending corrections if this appears to be a Czech surname
+        if (IsLikelyCzechSurname(name))
         {
-            return normalized.Substring(0, normalized.Length - 2) + "vá";
+            return ApplyCzechFeminineEndings(normalized);
+        }
+        
+        // For non-Czech surnames or uncertain cases, leave as-is
+        return normalized;
+    }
+
+    /// <summary>
+    /// Check if the surname already has a correct Czech feminine ending
+    /// </summary>
+    private static bool HasCorrectFeminineEnding(string normalizedName)
+    {
+        return normalizedName.EndsWith("ová") ||
+               normalizedName.EndsWith("ná") ||
+               normalizedName.EndsWith("ká") ||
+               normalizedName.EndsWith("á") ||
+               normalizedName.EndsWith("é") ||
+               normalizedName.EndsWith("í");
+    }
+
+    /// <summary>
+    /// Determine if this is likely a Czech surname that should follow Czech feminine ending rules
+    /// </summary>
+    private static bool IsLikelyCzechSurname(string name)
+    {
+        string n = name.ToLowerInvariant();
+        int pos = 0;          // strong positive evidence
+        int conditional = 0;  // weaker bonus we add only if no big negatives
+        int neg = 0;
+
+        // ===== Strong positives =====
+        if (ContainsCzechSpecificDiacritics(name)) pos += 4;
+        if (n.EndsWith("ová") || n.EndsWith("á")) pos += 3;
+        if (n.EndsWith("ova") && !n.Contains('w') && !n.Contains("cz")) pos += 2;
+
+        // conditional positives – common ASCII feminine endings
+        if ((n.EndsWith("va") && !n.EndsWith("ova")) || n.EndsWith("na") || n.EndsWith("ka"))
+            conditional = 2;
+        else if ((n.EndsWith("ska") || n.EndsWith("cka")) && !n.Contains('w') && !n.Contains("cz"))
+            conditional = 2;
+
+        if (HasCzechConsonantPatterns(n)) pos += 1;
+        if (ContainsCzechMorphemes(n)) pos += 1;
+
+        // ===== Negatives =====
+        string[] eastPatterns = { "ii", "yi", "iy", "iia", "vna" };
+        foreach (var p in eastPatterns)
+            if (n.Contains(p)) neg += 2;
+
+        if (n.Contains("yk") || n.Contains("nyk")) neg += 3;
+        if ((n.EndsWith("ska") || n.EndsWith("cka")) && (n.Contains('w') || n.Contains("cz"))) neg += 3;
+        if (n.Count(c => c == 'y') >= 2) neg += 1;
+
+        int score = pos - neg;
+        // Apply conditional bonus only if we did not gather heavy negatives (neg <3)
+        if (score < 2 && neg < 3)
+            score += conditional;
+
+        return score >= 2;
+    }
+
+    /// <summary>
+    /// Apply Czech feminine ending transformations
+    /// </summary>
+    private static string ApplyCzechFeminineEndings(string normalized)
+    {
+        // Specific patterns first (longer matches)
+        if (normalized.EndsWith("ova"))
+        {
+            return normalized.Substring(0, normalized.Length - 3) + "ová";
+        }
+        else if (normalized.EndsWith("ina"))
+        {
+            return normalized.Substring(0, normalized.Length - 3) + "ína";
+        }
+        else if (normalized.EndsWith("ana"))
+        {
+            return normalized.Substring(0, normalized.Length - 3) + "ána";
+        }
+        else if (normalized.EndsWith("ena"))
+        {
+            return normalized.Substring(0, normalized.Length - 3) + "ěna";
+        }
+        
+        // Common endings
+        else if (normalized.EndsWith("va"))
+        {
+            // handle Kulhava -> Kulhavá (but skip -ova which was processed earlier)
+            if (!normalized.EndsWith("ova"))
+                return normalized.Substring(0, normalized.Length - 2) + "vá";
         }
         else if (normalized.EndsWith("ka"))
         {
@@ -1459,9 +1627,74 @@ public static class VokativRulesFromPython
         {
             return normalized.Substring(0, normalized.Length - 2) + "ná";
         }
+        else if (normalized.EndsWith("ta"))
+        {
+            return normalized.Substring(0, normalized.Length - 2) + "tá";
+        }
         
-        // If no pattern matches, return as-is
+        // General -a ending for Czech surnames
+        else if (normalized.EndsWith("a") && normalized.Length > 2)
+        {
+            // Only convert -a to -á for surnames that show other Czech characteristics
+            return normalized.Substring(0, normalized.Length - 1) + "á";
+        }
+        
+        // Fix common OCR error: grave accent à -> acute á
+        if (normalized.EndsWith("à"))
+        {
+            return normalized.Substring(0, normalized.Length - 1) + "á";
+        }
+        
         return normalized;
+    }
+
+    /// <summary>
+    /// Check for Czech-specific diacritics that are strong indicators of Czech origin
+    /// </summary>
+    private static bool ContainsCzechSpecificDiacritics(string name)
+    {
+        // Czech-specific characters that are rare in other languages
+        return name.Any(c => "čřňěšťžďůýáíéúóČŘŇĚŠŤŽĎŮÝÁÍÉÚÓ".Contains(c));
+    }
+
+    /// <summary>
+    /// Check for Czech consonant patterns and clusters
+    /// </summary>
+    private static bool HasCzechConsonantPatterns(string normalized)
+    {
+        string[] czechPatterns = {
+            "ck", "čk", "št", "žd", "ň", "ř", "dv", "tv", "sv", "zv",
+            "chr", "tř", "čt", "šť", "žd", "bd", "pt", "kt", "rn", "rt", "rm", "rk", "rv", "rs"
+        };
+        return czechPatterns.Any(p => normalized.Contains(p));
+    }
+
+    /// <summary>
+    /// Check for typical Czech surname structural patterns
+    /// </summary>
+    private static bool HasCzechSurnamePattern(string normalized)
+    {
+        // Czech surname ending patterns (both masculine and feminine forms)
+        string[] czechSurnamePatterns = {
+            "ek", "ák", "ík", "ný", "cký", "ský", "ová", "ná", "ká",
+            "ec", "ic", "el", "ol", "an", "on", "yn", "en"
+        };
+        
+        return czechSurnamePatterns.Any(pattern => normalized.EndsWith(pattern));
+    }
+
+    /// <summary>
+    /// Check for Czech morphological elements (prefixes, stems, etc.)
+    /// </summary>
+    private static bool ContainsCzechMorphemes(string normalized)
+    {
+        // Common Czech morphemes and word elements
+        string[] czechMorphemes = {
+            "nov", "svo", "cer", "dvo", "kra", "hra", "bla", "mla",
+            "dub", "lip", "jes", "bor", "str", "kol", "pol", "vol"
+        };
+        
+        return czechMorphemes.Any(morpheme => normalized.Contains(morpheme));
     }
 
     /// <summary>
@@ -1564,14 +1797,14 @@ public static class VokativRulesFromPython
         if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(result)) return result;
 
         // All uppercase original
-        if (original.ToUpperInvariant() == original)
+        if (original.Equals(original, StringComparison.InvariantCultureIgnoreCase))
         {
             return result.ToUpperInvariant();
         }
 
         // Smart capitalization: if original is all lowercase (like user typed names),
         // still capitalize the first letter for proper names
-        if (original.ToLowerInvariant() == original && char.IsLetter(original[0]))
+        if (original.Equals(original, StringComparison.InvariantCultureIgnoreCase) && char.IsLetter(original[0]))
         {
             if (result.Length == 1) return result.ToUpperInvariant();
             return char.ToUpperInvariant(result[0]) + result.Substring(1).ToLowerInvariant();

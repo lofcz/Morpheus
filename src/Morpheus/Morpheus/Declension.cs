@@ -399,42 +399,70 @@ public static class Declension
 
             if (char.IsWhiteSpace(ch)) { Flush(); continue; }
 
-            // Handle punctuation as delimiter or abbreviation
-            if (ch == ',' || ch == ';' || ch == ':')
+            switch (ch)
             {
-                // comma / semicolon / colon act purely as separators
-                Flush();
-                continue;
-            }
-
-            else if (ch == '.')
-            {
-                bool nextIsUpperOrDigit = i + 1 < input.Length && !char.IsWhiteSpace(input[i + 1]) &&
-                                           (char.IsUpper(input[i + 1]) || char.IsDigit(input[i + 1]));
-
-                if (nextIsUpperOrDigit)
+                // Handle punctuation as delimiter or abbreviation
+                case ',':
+                case ';':
+                case ':':
+                    // comma / semicolon / colon act purely as separators
+                    Flush();
+                    continue;
+                case '.':
                 {
-                    // Check if current token + '.' is a known title (e.g., Ing., PhDr.)
-                    string candidate = sb.ToString() + ".";
-                    if (!string.IsNullOrEmpty(sb.ToString()) && KnownTitles.ContainsKey(candidate))
+                    bool nextIsUpperOrDigit = i + 1 < input.Length && !char.IsWhiteSpace(input[i + 1]) &&
+                                              (char.IsUpper(input[i + 1]) || char.IsDigit(input[i + 1]));
+                    bool nextIsUpperAfterSpace = i + 1 < input.Length && char.IsWhiteSpace(input[i + 1]) &&
+                                                  i + 2 < input.Length && char.IsUpper(input[i + 2]);
+                    bool isEndOfString = i + 1 >= input.Length;
+
+                    // Check for known title when dot is followed by uppercase/digit immediately
+                    if (nextIsUpperOrDigit)
                     {
-                        sb.Append('.');
+                        string candidate = sb.ToString() + ".";
+                        if (!string.IsNullOrEmpty(sb.ToString()) && KnownTitles.ContainsKey(candidate))
+                        {
+                            sb.Append('.');
+                            Flush();
+                            continue;
+                        }
+
+                        // Not a known title: treat dot as separator and don't include it in token
                         Flush();
                         continue;
                     }
 
-                    // Otherwise treat the dot as a separator between tokens (e.g., "Červenka.Michal")
-                    Flush();
+                    // Check for known title or name abbreviation when dot is followed by space + uppercase
+                    if (nextIsUpperAfterSpace)
+                    {
+                        string candidate = sb.ToString() + ".";
+                        if (!string.IsNullOrEmpty(sb.ToString()) && KnownTitles.ContainsKey(candidate))
+                        {
+                            // Known title: keep dot
+                            sb.Append('.');
+                            Flush();
+                            continue;
+                        }
+
+                        // Not a known title but looks like name abbreviation: strip dot
+                        Flush();
+                        continue;
+                    }
+
+                    // Dot at end of string or followed by whitespace (but not uppercase):
+                    // Keep dot as part of token (e.g., "s.r.o.", "a.s.")
+                    sb.Append('.');
+                    if (isEndOfString)
+                    {
+                        Flush();
+                    }
                     continue;
                 }
-
-                // Not followed by uppercase/digit: keep dot inside token (e.g., s.r.o.)
-                sb.Append('.');
-                continue;
+                default:
+                    // regular character (letter, digit, hyphen, etc.)
+                    sb.Append(ch);
+                    break;
             }
-
-            // regular character (letter, digit, hyphen, etc.)
-            sb.Append(ch);
         }
 
         Flush();
@@ -846,6 +874,41 @@ public static class Declension
         return null;
     }
 
+    /// <summary>
+    /// Filter duplicate surnames from the token list, keeping only the first occurrence of each unique surname.
+    /// Only applies to tokens with LastName role. FirstName tokens are not filtered as people can have 
+    /// multiple identical first names (e.g., "Jan Jan Novák").
+    /// </summary>
+    private static List<NameToken> FilterDuplicateSurnames(List<NameToken> tokens)
+    {
+        var result = new List<NameToken>();
+        var seenSurnames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        
+        foreach (NameToken token in tokens)
+        {
+            if (token.Role == TokenRole.LastName)
+            {
+                // For surnames, check if we've already seen this exact name (case-insensitive)
+                if (seenSurnames.Contains(token.Normalized))
+                {
+                    // Skip this duplicate surname
+                    continue;
+                }
+                
+                // First occurrence of this surname - add it to seen set and include in result
+                seenSurnames.Add(token.Normalized);
+                result.Add(token);
+            }
+            else
+            {
+                // For non-surname tokens (first names, titles, etc.), always include
+                result.Add(token);
+            }
+        }
+        
+        return result;
+    }
+
     // Step 3: Infer gender using prebuilt data + heuristics
     // Step 4: Infer gender from tokens (enhanced with scraped data and token roles)
     private static DetectedGender InferGender(List<NameToken> tokens)
@@ -909,11 +972,17 @@ public static class Declension
         // 3. Surname morphology evidence (lower confidence) - last names only
         foreach (NameToken token in lastNameTokens)
         {
-            if (token.Original.EndsWith("ová", StringComparison.OrdinalIgnoreCase))
+            string normalized = token.Normalized;
+            
+            if (normalized.EndsWith("ová", StringComparison.OrdinalIgnoreCase))
             {
                 genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 5, $"Surname ending: {token.Original} (-ová)"));
             }
-            else if (token.Original.EndsWith("á", StringComparison.OrdinalIgnoreCase))
+            else if (normalized.EndsWith("ova", StringComparison.OrdinalIgnoreCase))
+            {
+                genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 5, $"Surname ending: {token.Original} (-ova)"));
+            }
+            else if (normalized.EndsWith("á", StringComparison.OrdinalIgnoreCase))
             {
                 genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 3, $"Surname ending: {token.Original} (-á)"));
             }
@@ -928,6 +997,10 @@ public static class Declension
             if (word.EndsWith("ová", StringComparison.OrdinalIgnoreCase))
             {
                 genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 6, $"Feminine ending: {word} (-ová)"));
+            }
+            else if (word.EndsWith("ova", StringComparison.OrdinalIgnoreCase))
+            {
+                genderEvidence.Add(new GenderEvidence(DetectedGender.Feminine, 6, $"Feminine ending: {word} (-ova)"));
             }
             else if (word.EndsWith("á", StringComparison.OrdinalIgnoreCase))
             {
@@ -1039,6 +1112,9 @@ public static class Declension
         // Step 2: Assign token roles
         List<NameToken> tokens = AssignTokenRoles(normalizedInput);
 
+        // Step 2.5: Filter duplicate surnames (keep only first occurrence)
+        tokens = FilterDuplicateSurnames(tokens);
+
         // Step 3: Handle titles (detect and temporarily remove)
         ParsedTitles parsedTitles = ExtractTitles(tokens);
 
@@ -1049,7 +1125,7 @@ public static class Declension
         DetectedEntityType entityType = InferEntityType(tokens);
 
         // Step 6: Infer the declension result
-        string declinedOutput = InferDeclensionResult(tokens, @case, detectedGender, entityType, options);
+        string declinedOutput = InferDeclensionResult(tokens, @case, detectedGender, entityType, options, input);
 
         // Reconstruct final output with titles if not omitted
         string finalOutput = ReconstructOutput(parsedTitles, declinedOutput, @case, detectedGender, options);
@@ -1072,7 +1148,7 @@ public static class Declension
     }
 
     // Step 6: Infer the declension result using pre-assigned token roles
-    private static string InferDeclensionResult(List<NameToken> tokens, CzechCase @case, DetectedGender gender, DetectedEntityType entityType, DeclensionOptions options)
+    private static string InferDeclensionResult(List<NameToken> tokens, CzechCase @case, DetectedGender gender, DetectedEntityType entityType, DeclensionOptions options, string originalInput)
     {
         if (tokens.Count == 0) return string.Empty;
         if (entityType == DetectedEntityType.Company) 
@@ -1096,7 +1172,7 @@ public static class Declension
                        (token.Role == TokenRole.LastName && options.OmitLastName);
             if (skip) continue;
 
-            string declined = DeclineWordWithRole(token, @case, gender, entityType);
+            string declined = DeclineWordWithRole(token, @case, gender, entityType, originalInput);
 
             declined = NameCasing.NormalizeForRole(declined, token.Role, token.Original);
             
@@ -1106,7 +1182,7 @@ public static class Declension
         return string.Join(" ", declinedWords);
     }
 
-    private static string DeclineWordWithRole(NameToken token, CzechCase @case, DetectedGender gender, DetectedEntityType entityType)
+    private static string DeclineWordWithRole(NameToken token, CzechCase @case, DetectedGender gender, DetectedEntityType entityType, string originalInput)
     {
         bool isLastName = token.Role == TokenRole.LastName;
         
@@ -1151,16 +1227,16 @@ public static class Declension
 
         // Fallback to rule-based declension
         // For surnames ending in -ova/-ová, treat them as feminine forms
-        if (isLastName && (token.Original.EndsWith("ova", StringComparison.OrdinalIgnoreCase) || 
-                          token.Original.EndsWith("ová", StringComparison.OrdinalIgnoreCase)))
+        if (isLastName && token.Original.EndsWith("ová", StringComparison.OrdinalIgnoreCase))
         {
             // This is already a feminine surname form, just apply proper casing
             string result = token.Original;
             if (result.EndsWith("ova", StringComparison.OrdinalIgnoreCase))
             {
-                // Convert "ova" to "ová" with proper casing
-                result = result.Substring(0, result.Length - 3) + "ová";
+                // we might need to replace -ova with -ová
+                result = Rules.VokativRulesFromPython.RestoreFeminineSurnameDiacritics(token.Original);
             }
+            
             return MatchCasing(token.Original, result);
         }
         

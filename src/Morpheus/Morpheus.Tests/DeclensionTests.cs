@@ -52,6 +52,14 @@ public class DeclensionTests
     }
     
     [Test]
+    public void Decline_WithDot()
+    {
+        var s = "Vít. Ledvinka";
+        var r = Declension.Decline(s, CzechCase.Vocative);
+        Assert.That(r.Output, Is.EqualTo("Víte Ledvinko"));
+    }
+    
+    [Test]
     public void DeclineTitleWithoutSpace()
     {
         var s = "ing.Pavel Stupárek";
@@ -87,6 +95,30 @@ public class DeclensionTests
         var res = Declension.Decline(input, CzechCase.Dative);
         Assert.That(res.EntityType, Is.EqualTo(DetectedEntityType.Company));
         Assert.That(res.Output, Is.EqualTo(input));
+    }
+    
+    [Test]
+    public void RussianName()
+    {
+        var s = "Ievgeniia Skrypnykova";
+        var r = Declension.Decline(s, CzechCase.Vocative);
+        Assert.That(r.Output, Is.EqualTo("Ievgenije Skrypnykova"));
+    }
+    
+    [Test]
+    public void FemaleAEndingCzech()
+    {
+        var s = "Tereza Konvična";
+        var r = Declension.Decline(s, CzechCase.Vocative);
+        Assert.That(r.Output, Is.EqualTo("Terezo Konvičná"));
+    }
+    
+    [Test]
+    public void FemaleAEndingCzechScore()
+    {
+        var s = "Lenka Kulhava";
+        var r = Declension.Decline(s, CzechCase.Vocative);
+        Assert.That(r.Output, Is.EqualTo("Lenko Kulhavá"));
     }
 
     [Test]
