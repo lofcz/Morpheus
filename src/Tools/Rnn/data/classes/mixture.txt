@@ -16,9 +16,10 @@ name,sources/names/names.txt
 name,sources/names/names2.txt
 name,sources/names/names_ru.txt,0.1
 name,sources/names/names_pl.txt,0.5
-name,sources/names/names_sv.txt
-name,sources/names/names_hu.txt
-name,sources/names/names_de.txt,0.25
+# disabled for now - start with simpler set
+#name,sources/names/names_sv.txt
+#name,sources/names/names_hu.txt
+#name,sources/names/names_de.txt,0.25
 
 # Nicknames
 nickname,sources/nicknames/epicube-players.txt

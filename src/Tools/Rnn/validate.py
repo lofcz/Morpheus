@@ -20,6 +20,7 @@ TAG_MAP = {
     "B-NICK": 3, "I-NICK": 4,
     "B-ORG": 5, "I-ORG": 6,
     "B-LOC": 7, "I-LOC": 8,
+    "B-TIT": 9, "I-TIT": 10,
 }
 ID_TO_TAG = {v: k for k, v in TAG_MAP.items()}
 
@@ -68,16 +69,21 @@ def validate_model():
         input_ids = encoding.ids
         word_ids = encoding.word_ids
         
-        # Align true labels with tokens, similar to the training dataset
+        # Align labels with tokens: label all subtokens for entities, only first for O
         aligned_labels = np.full(len(word_ids), -100, dtype=np.int64)
         previous_word_id = None
         for i, word_id in enumerate(word_ids):
             if word_id is None:
                 continue
-            if word_id != previous_word_id:
-                if word_id < len(true_tags):
-                    tag = true_tags[word_id]
-                    aligned_labels[i] = TAG_MAP.get(tag, TAG_MAP["O"])
+            if word_id < len(true_tags):
+                tag = true_tags[word_id]
+                if word_id != previous_word_id:
+                    aligned_labels[i] = TAG_MAP.get(tag, TAG_MAP["O"])  # first subtoken keeps tag
+                else:
+                    if tag.startswith("B-") or tag.startswith("I-"):
+                        base = tag.split("-", 1)[1]
+                        i_tag = f"I-{base}"
+                        aligned_labels[i] = TAG_MAP.get(i_tag, TAG_MAP["O"])
             previous_word_id = word_id
 
         # Pad and truncate

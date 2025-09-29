@@ -385,14 +385,9 @@ public static class Declension
         public TitleLevel? Level { get; init; }
         public TitleGender Gender { get; init; } = TitleGender.Neutral;
         public bool PlacesBefore { get; init; }
-        // NEW: vocative roots and salutation behaviour
         public string? MaleVocRoot { get; init; }
         public string? FemaleVocRoot { get; init; }
         public SalutationRank Rank { get; init; } = SalutationRank.None;
-        public string? VocativeMale { get; init; }
-        public string? VocativeFemale { get; init; }
-        public string? VocativeRoot { get; init; }
-        public bool OverridesName { get; init; }
     }
 
     private class ParsedTitles

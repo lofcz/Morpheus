@@ -24,6 +24,7 @@ TAG_MAP = {
     "B-NICK": 3, "I-NICK": 4,
     "B-ORG": 5, "I-ORG": 6,
     "B-LOC": 7, "I-LOC": 8,
+    "B-TIT": 9, "I-TIT": 10,
 }
 NUM_TAGS = len(TAG_MAP)
 
@@ -75,38 +76,77 @@ def load_ner_data_from_csv(path: str):
 
 
 # --- Model Definition ---
+class DepthwiseSeparableConvBlock(nn.Module):
+    def __init__(self, channels: int, kernel_size: int = 5, dilation: int = 1, dropout: float = 0.1):
+        super().__init__()
+        # Padding to preserve sequence length
+        padding = (kernel_size // 2) * dilation
+        self.depthwise = nn.Conv1d(
+            in_channels=channels,
+            out_channels=channels,
+            kernel_size=kernel_size,
+            padding=padding,
+            dilation=dilation,
+            groups=channels,
+            bias=False,
+        )
+        self.bn_dw = nn.BatchNorm1d(channels)
+        self.pointwise = nn.Conv1d(
+            in_channels=channels,
+            out_channels=channels,
+            kernel_size=1,
+            bias=False,
+        )
+        self.bn_pw = nn.BatchNorm1d(channels)
+        self.activation = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [batch, channels, seq_len]
+        residual = x
+        y = self.depthwise(x)
+        y = self.bn_dw(y)
+        y = self.activation(y)
+        y = self.pointwise(y)
+        y = self.bn_pw(y)
+        y = self.dropout(y)
+        return y + residual
+
+
 class NerClassifier(nn.Module):
     def __init__(self, vocab_size, embedding_dim, hidden_dim, output_dim, n_layers, dropout):
         super().__init__()
-        self.embedding = nn.Embedding(vocab_size, embedding_dim)
-        
-        self.gru = nn.GRU(embedding_dim, 
-                          hidden_dim, 
-                          num_layers=n_layers,
-                          batch_first=True, 
-                          bidirectional=True,
-                          dropout=dropout if n_layers > 1 else 0)
-        
-        self.dropout = nn.Dropout(dropout)
-        
-        # This layer maps the concatenated hidden states of the GRU to the number of NER tags
-        self.fc = nn.Linear(hidden_dim * 2, output_dim)
+        # Embedding and positional encoding
+        self.token_embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.positional_embedding = nn.Embedding(MAX_LEN, embedding_dim)
+        # Project embeddings to CNN channel width (reuse hidden_dim as channels)
+        self.input_projection = nn.Linear(embedding_dim, hidden_dim)
+        # Depthwise-separable CNN stack with dilations
+        blocks = []
+        # Cycle dilations [1, 2, 4, 8] to expand receptive field efficiently
+        dilation_cycle = [1, 2, 4, 8]
+        for i in range(max(1, int(n_layers))):
+            dilation = dilation_cycle[i % len(dilation_cycle)]
+            blocks.append(DepthwiseSeparableConvBlock(hidden_dim, kernel_size=5, dilation=dilation, dropout=dropout))
+        self.conv_blocks = nn.ModuleList(blocks)
+        # Output projection to tag logits per token
+        self.output_projection = nn.Linear(hidden_dim, output_dim)
 
-    def forward(self, input_ids):
-        # input_ids shape: [batch_size, max_len]
-        
-        # embedded shape: [batch_size, max_len, embedding_dim]
-        embedded = self.embedding(input_ids)
-        
-        # gru_outputs shape: [batch_size, max_len, hidden_dim * 2]
-        gru_outputs, _ = self.gru(embedded)
-        
-        gru_outputs = self.dropout(gru_outputs)
-        
-        # Pass the GRU output for each token through the final layer
-        # logits shape: [batch_size, max_len, output_dim (num_tags)]
-        logits = self.fc(gru_outputs)
-        
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        # input_ids: [batch, seq_len]
+        batch_size, seq_len = input_ids.size(0), input_ids.size(1)
+        token_embed = self.token_embedding(input_ids)  # [B, L, E]
+        # positions 0..seq_len-1 (cap at MAX_LEN)
+        positions = torch.arange(seq_len, device=input_ids.device).clamp(max=MAX_LEN - 1)
+        positions = positions.unsqueeze(0).expand(batch_size, -1)  # [B, L]
+        pos_embed = self.positional_embedding(positions)  # [B, L, E]
+        x = token_embed + pos_embed  # [B, L, E]
+        x = self.input_projection(x)  # [B, L, C]
+        x = x.transpose(1, 2)  # [B, C, L]
+        for block in self.conv_blocks:
+            x = block(x)  # [B, C, L]
+        x = x.transpose(1, 2)  # [B, L, C]
+        logits = self.output_projection(x)  # [B, L, output_dim]
         return logits
 
 
@@ -130,8 +170,9 @@ class NerDataset(Dataset):
         encoding = self.tokenizer.encode(text)
         input_ids = encoding.ids
         
-        # Align labels with tokens. This is crucial for NER with subword tokenizers.
-        # The strategy is to label only the first sub-token of a word and ignore the rest (-100).
+        # Align labels with tokens. Label all subtokens for entity words:
+        # first subtoken keeps B-/I- tag, subsequent subtokens use the corresponding I- tag.
+        # For non-entity (O) words, only the first subtoken is labeled; others are ignored (-100)
         word_ids = encoding.word_ids
         aligned_labels = np.full(len(word_ids), -100, dtype=np.int64)
         
@@ -139,11 +180,17 @@ class NerDataset(Dataset):
         for i, word_id in enumerate(word_ids):
             if word_id is None:
                 continue # Special token
-            if word_id != previous_word_id:
-                # This is the first sub-token of a word.
-                if word_id < len(tags):
-                    tag = tags[word_id]
+            if word_id < len(tags):
+                tag = tags[word_id]
+                if word_id != previous_word_id:
+                    # First subtoken: keep original tag
                     aligned_labels[i] = self.tag_map.get(tag, self.tag_map["O"])
+                else:
+                    # Subsequent subtokens: if entity, force I-<TYPE>; if O, ignore
+                    if tag.startswith("B-") or tag.startswith("I-"):
+                        base = tag.split("-", 1)[1]
+                        i_tag = f"I-{base}"
+                        aligned_labels[i] = self.tag_map.get(i_tag, self.tag_map["O"])
             previous_word_id = word_id
         
         # Pad sequences to max_len

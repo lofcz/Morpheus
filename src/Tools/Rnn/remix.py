@@ -12,6 +12,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 B_PER, I_PER = "B-PER", "I-PER"
 B_ORG, I_ORG = "B-ORG", "I-ORG"
 B_NICK, I_NICK = "B-NICK", "I-NICK"
+B_TIT, I_TIT = "B-TIT", "I-TIT"
 O = "O"
 
 # List of Czech and common international company suffixes
@@ -40,6 +41,95 @@ TITLES_AFTER = [
     "J.M.", "Vdp.", "AMPLMUS", "A.R.D.", "Vldp.", "R.D.", "Dp.", "Vp.",
     "Rev. dom.", "Ct.p.", "V.G.", "P.A.", "J.C.D.", "S.T.D.", "D.D.", "Dr. eccl."
 ]
+
+
+# --- Allowed character filtering (to protect tokenizer vocab) ---
+# We keep only: a-z, digits, limited punctuation, and specific diacritics for cs/sk/pl plus Russian Cyrillic.
+_LATIN_BASE = "abcdefghijklmnopqrstuvwxyz"
+_CS = "áčďéěíňóřšťúůýž"
+_SK = "áäčďéíĺľňóôŕšťúýž"
+_PL = "ąćęłńóśźż"
+_RUS_CYR_RANGE = ("\u0430", "\u044f")  # 'а'..'я'
+_RUS_EXTRA = "ё"  # include 'ё'
+_DIGITS = "0123456789"
+_PUNCT = " .,'\";-_/()[]@:+&|"  # minimal set used by our patterns (incl. semicolon and quotes)
+
+_ALLOWED_LATIN = set(_LATIN_BASE + _CS + _SK + _PL)
+_ALLOWED_CYR = set(chr(c) for c in range(ord(_RUS_CYR_RANGE[0]), ord(_RUS_CYR_RANGE[1]) + 1)) | set(_RUS_EXTRA)
+_ALLOWED = _ALLOWED_LATIN | _ALLOWED_CYR | set(_DIGITS) | set(_PUNCT)
+
+_MAP_CHARS = {
+    # quotes
+    "“": '"', "”": '"', "„": '"', "‟": '"', "‹": "'", "›": "'", "’": "'", "‚": "'",
+    # dashes
+    "–": "-", "—": "-", "−": "-",
+    # spaces
+    "\u00A0": " ",  # nbsp
+}
+
+def _map_char(c: str) -> str:
+    return _MAP_CHARS.get(c, c)
+
+def _is_allowed(c: str) -> bool:
+    return c in _ALLOWED
+
+def clean_text_and_tags_for_tokenizer(text: str, tags_str: str) -> tuple[str, str]:
+    """
+    Normalize and filter text to an allowed charset. Preserve tag alignment by
+    dropping words that become empty after filtering.
+    - Applies NFKC, lowercases, maps fancy quotes/dashes to ASCII
+    - Keeps only: a-z, cs/sk/pl diacritics, Russian Cyrillic, digits, selected punctuation
+    - Collapses repeated spaces
+    """
+    if not text:
+        return "", ""
+
+    # Normalize and lowercase first
+    text = unicodedata.normalize('NFKC', text).lower()
+
+    words = text.split()
+    tags = tags_str.split()
+    if len(tags) != len(words):
+        # In case of mismatch, fall back to whole-string filtering and keep tags as-is if lengths match after split
+        filtered = []
+        for ch in text:
+            ch_m = _map_char(ch)
+            if unicodedata.category(ch_m)[0] in ('C',):
+                # Drop control/nonspacing format chars
+                continue
+            if _is_allowed(ch_m):
+                filtered.append(ch_m)
+            elif ch_m in {"\t", "\n", "\r"}:
+                filtered.append(" ")
+        s = "".join(filtered)
+        s = " ".join(s.split())
+        # After filtering, rebuild tags to match words length if possible
+        words2 = s.split()
+        if len(words2) == len(tags):
+            return s, " ".join(tags)
+        return "", ""
+
+    out_words: list[str] = []
+    out_tags: list[str] = []
+    for w, t in zip(words, tags):
+        # Map per-char and filter
+        buf = []
+        for ch in w:
+            ch_m = _map_char(ch)
+            if unicodedata.category(ch_m)[0] in ('C',):
+                continue  # drop controls/format
+            if _is_allowed(ch_m):
+                buf.append(ch_m)
+        w2 = "".join(buf).strip(" ")
+        if w2:
+            out_words.append(w2)
+            out_tags.append(t)
+
+    if not out_words or len(out_words) != len(out_tags):
+        return "", ""
+    cleaned_text = " ".join(out_words)
+    cleaned_tags = " ".join(out_tags)
+    return cleaned_text, cleaned_tags
 
 
 def cripple_entity(text: str) -> str:
@@ -99,6 +189,45 @@ def tag_entity(text: str, base_tag: str) -> Tuple[List[str], List[str]]:
     tags.extend([f"I-{base_tag}"] * (len(words) - 1))
     return words, tags
 
+def tag_title_text(title_text: str) -> Tuple[List[str], List[str]]:
+    """Tokenize a title string and tag it as TIT (B-TIT/I-TIT)."""
+    words = title_text.split()
+    if not words:
+        return [], []
+    tags = [B_TIT] + [I_TIT] * (len(words) - 1)
+    return words, tags
+
+def corrupt_title_string(title: str) -> str:
+    """Produce realistic corruptions of titles: missing/extra dots, spacing, casing, minor typos."""
+    s = title
+    # Random casing variations
+    r = random.random()
+    if r < 0.10:
+        s = s.upper()
+    elif r < 0.20:
+        s = s.lower()
+    # Missing dots or extra dots
+    if random.random() < 0.35:
+        s = s.replace(".", "")
+    elif random.random() < 0.05:
+        s = s.replace(".", "..")
+    # Random extra spaces around dots/abbrev parts
+    if random.random() < 0.2:
+        s = s.replace(". ", ".").replace(".", ". ")
+    # Minor typo: swap or substitute a character (letters only)
+    if random.random() < 0.10 and len(s) > 2:
+        idx = random.randint(0, len(s) - 2)
+        if s[idx].isalpha() and s[idx+1].isalpha():
+            s = s[:idx] + s[idx+1] + s[idx] + s[idx+2:]
+    elif random.random() < 0.10 and len(s) > 1:
+        idx = random.randint(0, len(s) - 1)
+        if s[idx].isalpha():
+            replacement = random.choice("abcdefghijklmnopqrstuvwxyz")
+            s = s[:idx] + replacement + s[idx+1:]
+    # Normalize whitespace
+    s = " ".join(s.split())
+    return s
+
 def load_entities(path: str) -> List[str]:
     """Loads a list of entities from a file, one per line."""
     if not os.path.exists(path):
@@ -128,7 +257,10 @@ def remix_single_entity(names: List[str], companies: List[str], nicknames: List[
     return text, tag
 
 def remix_name_with_title(names: List[str]) -> Tuple[str, str]:
-    """Adds a common Czech title to a name, including complex/incorrect variations."""
+    """
+    Adds one or more titles to a name, before and/or after, with corruption and wrong placements.
+    Titles are tagged as TIT, names as PER. Separators and commas are O.
+    """
     if not names:
         return "", ""
     name_text = random.choice(names)
@@ -140,33 +272,35 @@ def remix_name_with_title(names: List[str]) -> Tuple[str, str]:
     final_words = []
     final_tags = []
 
-    # Case 1: Simple, single title (most common) - 60% chance
+    # Case 1: Simple, single title (most common) - 40% chance
     if pattern_roll < 0.6:
-        place_it_wrong = random.random() < 0.15
+        place_it_wrong = random.random() < 0.20
         place_before = random.random() < 0.7 
 
         if not place_it_wrong:
             if place_before and TITLES_BEFORE:
-                title = random.choice(TITLES_BEFORE)
-                title_words = title.split()
+                title = corrupt_title_string(random.choice(TITLES_BEFORE))
+                title_words, title_tags = tag_title_text(title)
                 final_words = title_words + name_words
-                final_tags = [O] * len(title_words) + name_tags
+                final_tags = title_tags + name_tags
             elif TITLES_AFTER:
-                title = random.choice(TITLES_AFTER)
-                title_words = title.split()
+                title = corrupt_title_string(random.choice(TITLES_AFTER))
+                title_words, title_tags = tag_title_text(title)
                 final_words = name_words + [","] + title_words
-                final_tags = name_tags + [O] + ([O] * len(title_words))
+                final_tags = name_tags + [O] + title_tags
         else: # Intentionally place it wrong
             if place_before and TITLES_BEFORE:
-                title = random.choice(TITLES_BEFORE)
-                title_words = title.split()
+                # Wrongly place before-name title after the name
+                title = corrupt_title_string(random.choice(TITLES_BEFORE))
+                title_words, title_tags = tag_title_text(title)
                 final_words = name_words + [","] + title_words
-                final_tags = name_tags + [O] + ([O] * len(title_words))
+                final_tags = name_tags + [O] + title_tags
             elif TITLES_AFTER:
-                title = random.choice(TITLES_AFTER)
-                title_words = title.split()
+                # Wrongly place after-name title before the name
+                title = corrupt_title_string(random.choice(TITLES_AFTER))
+                title_words, title_tags = tag_title_text(title)
                 final_words = title_words + name_words
-                final_tags = [O] * len(title_words) + name_tags
+                final_tags = title_tags + name_tags
 
     # Case 2: Two titles (less common) - 30% chance
     elif pattern_roll < 0.9 and len(TITLES_BEFORE) > 1 and len(TITLES_AFTER) > 1:
@@ -174,29 +308,74 @@ def remix_name_with_title(names: List[str]) -> Tuple[str, str]:
 
         if sub_pattern == "before_before":
             title1, title2 = random.sample(TITLES_BEFORE, 2)
-            t1_words, t2_words = title1.split(), title2.split()
+            t1_words, t1_tags = tag_title_text(corrupt_title_string(title1))
+            t2_words, t2_tags = tag_title_text(corrupt_title_string(title2))
             final_words = t1_words + t2_words + name_words
-            final_tags = [O] * (len(t1_words) + len(t2_words)) + name_tags
+            final_tags = t1_tags + t2_tags + name_tags
         elif sub_pattern == "after_after":
             title1, title2 = random.sample(TITLES_AFTER, 2)
-            t1_words, t2_words = title1.split(), title2.split()
+            t1_words, t1_tags = tag_title_text(corrupt_title_string(title1))
+            t2_words, t2_tags = tag_title_text(corrupt_title_string(title2))
             final_words = name_words + [","] + t1_words + [","] + t2_words
-            final_tags = name_tags + [O] + ([O] * len(t1_words)) + [O] + ([O] * len(t2_words))
+            final_tags = name_tags + [O] + t1_tags + [O] + t2_tags
         else: # "before_after"
             title1 = random.choice(TITLES_BEFORE)
             title2 = random.choice(TITLES_AFTER)
-            t1_words, t2_words = title1.split(), title2.split()
+            t1_words, t1_tags = tag_title_text(corrupt_title_string(title1))
+            t2_words, t2_tags = tag_title_text(corrupt_title_string(title2))
             final_words = t1_words + name_words + [","] + t2_words
-            final_tags = [O] * len(t1_words) + name_tags + [O] + ([O] * len(t2_words))
+            final_tags = t1_tags + name_tags + [O] + t2_tags
             
-    # Case 3: Duplicated title (e.g., Mgr. et Mgr.) - 10% chance
+    # Case 3: Many titles (3–8 total), mix before and after, commas optional - 8% chance
+    elif pattern_roll < 0.98:
+        # Decide how many total titles
+        total_titles = random.randint(3, 8)
+        # Prefer both sides populated
+        before_count = random.randint(1, max(1, total_titles - 1))
+        after_count = total_titles - before_count
+
+        # Build before titles (mostly from TITLES_BEFORE, with some wrong placements)
+        before_words: list[str] = []
+        before_tags: list[str] = []
+        for _ in range(before_count):
+            src_list = TITLES_BEFORE if random.random() > 0.2 else TITLES_AFTER
+            title = corrupt_title_string(random.choice(src_list))
+            tw, tt = tag_title_text(title)
+            # Occasionally separate multiple titles with comma
+            if before_words and random.random() < 0.3:
+                before_words += [","]
+                before_tags += [O]
+            before_words += tw
+            before_tags += tt
+
+        # Build after titles (mostly from TITLES_AFTER, with some wrong placements)
+        after_words: list[str] = []
+        after_tags: list[str] = []
+        for _ in range(after_count):
+            src_list = TITLES_AFTER if random.random() > 0.2 else TITLES_BEFORE
+            title = corrupt_title_string(random.choice(src_list))
+            tw, tt = tag_title_text(title)
+            # Separate multiple after titles optionally with comma
+            if after_words and random.random() < 0.6:
+                after_words += [","]
+                after_tags += [O]
+            after_words += tw
+            after_tags += tt
+
+        # Optionally place a comma between name and after titles (but sometimes not, to allow patterns like 'ing. name phd')
+        place_name_after_comma = random.random() < 0.6
+
+        final_words = before_words + name_words + ([","] if (after_words and place_name_after_comma) else []) + after_words
+        final_tags = before_tags + name_tags + ([O] if (after_words and place_name_after_comma) else []) + after_tags
+
+    # Case 4: Duplicated title (e.g., Mgr. et Mgr.) - remaining chance
     else:
         if TITLES_BEFORE:
-            title = random.choice(["Mgr.", "Ing."])
+            title = corrupt_title_string(random.choice(["Mgr.", "Ing."]))
             separator = random.choice(["et", "a"])
-            title_words = title.split()
+            title_words, title_tags = tag_title_text(title)
             final_words = title_words + [separator] + title_words + name_words
-            final_tags = [O] * len(title_words) + [O] + [O] * len(title_words) + name_tags
+            final_tags = title_tags + [O] + title_tags + name_tags
     
     # Final fallback if something went wrong
     if not final_words:
@@ -490,7 +669,7 @@ def remix_name_and_location(names: List[str], cities: List[str]) -> Tuple[str, s
     elif pattern == "city_sep_name":
         separator = random.choice([",", " - "])
         final_words = location_words + separator.split() + name_words
-        final_tags = location_tags + [O] * len(separator.split()) + name_words
+        final_tags = location_tags + [O] * len(separator.split()) + name_tags
     elif pattern == "name_city":
         final_words = name_words + location_words
         final_tags = name_tags + location_tags
@@ -772,10 +951,15 @@ def main():
         text, tags = strategy(**func_args)
         
         if text and tags:
-            # --- Final Normalization: Convert to lowercase ---
-            text = text.lower()
-
-            buffer.append({"text": text, "tags": tags})
+            # Clean and filter to allowed charset; preserve alignment
+            text, tags = clean_text_and_tags_for_tokenizer(text, tags)
+            # Validate: token count == tag count, all tags in allowed set
+            if text and tags:
+                tw = text.split()
+                tg = tags.split()
+                allowed_tags = {O, B_PER, I_PER, B_ORG, I_ORG, B_NICK, I_NICK, "B-LOC", "I-LOC", B_TIT, I_TIT}
+                if len(tw) == len(tg) and all(t in allowed_tags for t in tg):
+                    buffer.append({"text": text, "tags": tags})
             
         # Write chunk to disk when buffer is full or at the very end
         if len(buffer) >= args.chunk_size or (i == args.num_samples and buffer):
