@@ -1,0 +1,205 @@
+---
+description: working with remix.py, remix_config.py, creating new remix strategies
+alwaysApply: false
+---
+
+# Strategy Development Guide
+
+This guide explains how to create new remix strategies for the NER dataset synthesis system.
+
+## Overview
+
+The system is modularized with individual strategy files in the `strategies/` directory. Each strategy is a Python function that generates synthetic training samples for Named Entity Recognition.
+
+## File Structure
+
+```
+strategies/
+├── __init__.py          # Exports all strategy functions
+├── utils.py             # Shared constants and helper functions
+├── remix_config.py      # Strategy definitions and requirements
+└── [strategy_name].py   # Individual strategy implementations
+```
+
+## Creating a New Strategy
+
+### 1. Create the Strategy File
+
+Create a new file in `strategies/` directory, e.g., `my_new_strategy.py`:
+
+```python
+import random
+from typing import List, Tuple
+from strategies.utils import O, tag_entity
+
+def remix_my_new_strategy(names: List[str], companies: List[str]) -> Tuple[str, str]:
+    """
+    Brief description of what this strategy does.
+    
+    Args:
+        names: List of person names
+        companies: List of company names
+        
+    Returns:
+        Tuple of (text, tags) where:
+        - text: The generated sample text
+        - tags: Space-separated IOB tags (e.g., "B-PER I-PER O B-ORG")
+    """
+    if not names or not companies:
+        return "", ""
+    
+    # Your strategy logic here
+    name_text = random.choice(names)
+    company_text = random.choice(companies)
+    
+    # Tag entities using helper functions
+    name_words, name_tags = tag_entity(name_text, "PER")
+    company_words, company_tags = tag_entity(company_text, "ORG")
+    
+    # Combine with separators
+    separator = random.choice([",", "-", "|"])
+    final_words = name_words + [separator] + company_words
+    final_tags = name_tags + [O] + company_tags
+    
+    return " ".join(final_words), " ".join(final_tags)
+```
+
+### 2. Add to __init__.py
+
+Add your strategy to `strategies/__init__.py`:
+
+```python
+from .my_new_strategy import remix_my_new_strategy
+```
+
+### 3. Add to remix_config.py
+
+Add your strategy to the configuration in `remix_config.py`:
+
+```python
+# In the remix_strategies list
+{
+    "name": "remix_my_new_strategy",
+    "weight": 0.05,  # Probability weight (0.0 to 1.0)
+    "func": remix_my_new_strategy
+}
+
+# In the strategy_reqs dictionary
+"remix_my_new_strategy": {
+    "names": True,
+    "companies": True,
+    "cities": False,
+    "nicknames": False,
+    "org_types": False,
+    "o_phrase_words": False
+}
+```
+
+## Available Helper Functions
+
+### From `strategies.utils`:
+
+- **Tagging Functions:**
+  - `tag_entity(text, base_tag)` - Tags text as B-{tag}/I-{tag}
+  - `tag_title_text(title_text)` - Tags title as B-TIT/I-TIT
+
+- **Corruption Functions:**
+  - `cripple_entity(text)` - Adds typos/missing diacritics
+  - `cripple_text(text)` - General text corruption
+  - `corrupt_title_string(title)` - Title-specific corruption
+
+- **Constants:**
+  - `B_PER`, `I_PER` - Person tags
+  - `B_ORG`, `I_ORG` - Organization tags  
+  - `B_NICK`, `I_NICK` - Nickname tags
+  - `B_TIT`, `I_TIT` - Title tags
+  - `O` - Outside tag
+  - `TITLES_BEFORE`, `TITLES_AFTER` - Title lists
+  - `COMPANY_SUFFIXES` - Company suffixes
+
+## Strategy Patterns
+
+### Simple Entity Strategy
+```python
+def remix_simple_entity(entities: List[str]) -> Tuple[str, str]:
+    entity = random.choice(entities)
+    words, tags = tag_entity(entity, "PER")
+    return " ".join(words), " ".join(tags)
+```
+
+### Multi-Entity Strategy
+```python
+def remix_two_entities(names: List[str], companies: List[str]) -> Tuple[str, str]:
+    name = random.choice(names)
+    company = random.choice(companies)
+    
+    name_words, name_tags = tag_entity(name, "PER")
+    company_words, company_tags = tag_entity(company, "ORG")
+    
+    separator = random.choice([",", "-", "|"])
+    final_words = name_words + [separator] + company_words
+    final_tags = name_tags + [O] + company_tags
+    
+    return " ".join(final_words), " ".join(final_tags)
+```
+
+### Context-Aware Strategy
+```python
+def remix_with_context(entities: List[str], o_words: List[str]) -> Tuple[str, str]:
+    entity = random.choice(entities)
+    context_word = random.choice(o_words)
+    
+    entity_words, entity_tags = tag_entity(entity, "PER")
+    
+    # Add context before or after
+    if random.random() < 0.5:
+        final_words = [context_word] + entity_words
+        final_tags = [O] + entity_tags
+    else:
+        final_words = entity_words + [context_word]
+        final_tags = entity_tags + [O]
+    
+    return " ".join(final_words), " ".join(final_tags)
+```
+
+## Best Practices
+
+1. **Always check for empty inputs** - Return `("", "")` if required data is missing
+2. **Use helper functions** - Don't reinvent tagging logic
+3. **Add variety** - Use random choices for separators, patterns, etc.
+4. **Handle edge cases** - Empty strings, single words, etc.
+5. **Document your strategy** - Explain what patterns it generates
+6. **Test your strategy** - Make sure it produces valid IOB tags
+7. **Use appropriate weights** - Start with 0.05-0.1 for new strategies
+
+## Testing Your Strategy
+
+```python
+# Test your strategy function directly
+from strategies.my_new_strategy import remix_my_new_strategy
+
+names = ["Jan Novák", "Marie Svobodová"]
+companies = ["Acme Corp", "Tech Solutions"]
+
+text, tags = remix_my_new_strategy(names, companies)
+print(f"Text: {text}")
+print(f"Tags: {tags}")
+```
+
+## Common Patterns
+
+- **Name variations**: First name only, surname only, full name, shuffled
+- **Separators**: `,`, `-`, `|`, `/`, `&`, `:`, `@`
+- **Spacing**: No spaces, left space, right space, normal spacing
+- **Corruption**: Missing diacritics, typos, case variations
+- **Context**: Adding O-words around entities
+- **Titles**: Before-name and after-name titles with corruption
+
+## Example: Complete Strategy
+
+See `strategies/name_with_title.py` for a comprehensive example that handles:
+- Multiple title patterns
+- Random spacing modes
+- Title corruption
+- Comma handling
+- Edge cases

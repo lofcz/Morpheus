@@ -8,6 +8,8 @@ import heapq
 import hashlib
 import shutil
 from typing import Iterable, Iterator, List, Tuple, Optional, Dict
+import unicodedata
+import re
 
 # Resolve paths relative to this script's directory by default
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -15,6 +17,235 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 Label = str
 MixtureEntry = Tuple[str, float]
+
+# --- Title stripping for names (moved from remix) ---
+# Comprehensive lists of titles
+TITLES_BEFORE = [
+    "Pan", "Paní", "Bc.", "BcA.", "Ing.", "Ing. arch.", "MUDr.", "MDDr.", "MVDr.",
+    "MgA.", "Mgr.", "JUDr.", "PhDr.", "RNDr.", "PharmDr.", "ThLic.", "ThDr.",
+    "akad. arch.", "ak. mal.", "ak. soch.", "MSDr.", "PaedDr.", "PhMr.", "RCDr.",
+    "RSDr.", "RTDr.", "ThMgr.", "as.", "odb. as.", "doc.", "prof.", "voj.",
+    "svob.", "sv.", "des.", "čet.", "rtn.", "rtm.", "nrtm.", "prap.", "nprap.",
+    "št. prap.", "šprap.", "por.", "npor.", "kpt.", "mjr.", "pplk.", "plk.",
+    "brig.gen.", "genmjr.", "genpor.", "arm.gen.", "ppor.", "škpt.", "šrtm.",
+    "gen.", "genplk.", "Rev.", "Very Rev.", "Most Rev.", "Rt. Rev.", "Right Rev.",
+    "Fr.", "Father", "Sister", "Br.", "Brother", "Dcn.", "Deacon", "Bp.", "Bishop",
+    "Abp.", "Archbishop", "Msgr.", "Monsignor", "Card.", "Cardinal", "Dom", "Abbot",
+    "Mother", "Pastor", "Padre",
+    # Promovaný titles
+    "prom.", "promovaný", "promovaná",
+    "prom. lékař", "promovaný lékař", "promovaná lékařka",
+    "prom. právník", "promovaný právník", "promovaná právnička",
+    "prom. biolog", "promovaný biolog", "promovaná bioložka",
+    "prom. historik", "promovaný historik", "promovaná historička",
+    "inženýr architekt", "prom. architekt", "promovaný architekt", "promovaná architektka",
+    "prom. matematik", "promovaný matematik", "promovaná matematička",
+    "prom. fyzik", "promovaný fyzik", "promovaná fyzička",
+    "prom. chemik", "promovaný chemik", "promovaná chemička",
+    "prom. geolog", "promovaný geolog", "promovaná geoložka",
+    "prom. filosof", "promovaný filosof", "promovaná filosofka",
+    "prom. psycholog", "promovaný psycholog", "promovaná psycholožka",
+    "prom. ekonom", "promovaný ekonom", "promovaná ekonomka",
+    "prom. farmaceut", "promovaný farmaceut", "promovaná farmaceutka",
+    "prom. umělec", "promovaný umělec", "promovaná umělkyně",
+    "prom. pedagog", "promovaný pedagog", "promovaná pedagožka",
+    "prom. sociolog", "promovaný sociolog", "promovaná socioložka",
+]
+TITLES_AFTER = [
+    "Ph.D.", "DSc.", "CSc.", "Dr.", "DrSc.", "Th.D.", "DiS.", "dr. h. c.",
+    "prof. h. c.", "MBA", "LL.M.", "Jr.", "Sr.", "PP.", "J.Em.", "J.Exc.",
+    "J.M.", "Vdp.", "AMPLMUS", "A.R.D.", "Vldp.", "R.D.", "Dp.", "Vp.",
+    "Rev. dom.", "Ct.p.", "V.G.", "P.A.", "J.C.D.", "S.T.D.", "D.D.", "Dr. eccl."
+]
+
+def _normalize_dotless_token(s: str) -> str:
+    # Lowercase, strip dots and diacritics
+    s2 = s.strip().lower().replace('.', '')
+    s2 = s2 if s2 else s
+    s2 = unicodedata.normalize('NFD', s2)
+    return ''.join(ch for ch in s2 if not unicodedata.combining(ch))
+
+TITLE_NORM_SET = {
+    _normalize_dotless_token(tok)
+    for t in (TITLES_BEFORE + TITLES_AFTER)
+    for tok in t.split()
+    if tok
+}
+
+def strip_titles_from_name_line(raw: str) -> str:
+    parts = raw.split()
+    kept: List[str] = []
+    for p in parts:
+        pn = _normalize_dotless_token(p)
+        if pn in TITLE_NORM_SET:
+            continue
+        kept.append(p)
+    return ' '.join(kept).strip()
+
+# --- Additional name cleanup rules ---
+
+# Character filtering (Czech, Slovak, Polish, Russian, English only)
+_LATIN_BASE = "abcdefghijklmnopqrstuvwxyz"
+_CS = "áčďéěíňóřšťúůýž"
+_SK = "áäčďéíĺľňóôŕšťúýž"
+_PL = "ąćęłńóśźż"
+_RUS_CYR_RANGE = ("\u0430", "\u044f")  # 'а'..'я'
+_RUS_EXTRA = "ё"
+_ALLOWED_LATIN = set(_LATIN_BASE + _CS + _SK + _PL)
+_ALLOWED_CYR = set(chr(c) for c in range(ord(_RUS_CYR_RANGE[0]), ord(_RUS_CYR_RANGE[1]) + 1)) | set(_RUS_EXTRA)
+_ALLOWED_CHARS = _ALLOWED_LATIN | _ALLOWED_CYR | set(" -")  # Only letters, space, hyphen at this stage
+
+def _filter_allowed_chars(s: str) -> str:
+    """Keep only Czech, Slovak, Polish, Russian, English letters plus space and hyphen."""
+    return ''.join(ch for ch in s if ch in _ALLOWED_CHARS)
+
+_DASH_MAP = {
+    "–": "-",
+    "—": "-",
+    "−": "-",
+}
+
+_QUOTE_PAIRS = [
+    ("\"", "\""), ("'", "'"), ("“", "”"), ("„", "“"), ("‹", "›"), ("«", "»"), ("`", "`")
+]
+
+def _normalize_dashes(s: str) -> str:
+    return ''.join(_DASH_MAP.get(ch, ch) for ch in s)
+
+def _remove_quoted_segments(s: str) -> str:
+    # Remove substrings inside any supported quote pair
+    for ql, qr in _QUOTE_PAIRS:
+        start = s.find(ql)
+        while start != -1:
+            end = s.find(qr, start + len(ql))
+            if end == -1:
+                # No closing quote; drop from opening quote
+                s = s[:start]
+                break
+            s = s[:start] + s[end + len(qr):]
+            start = s.find(ql)
+    return s
+
+_SEP_CHARS = [".", ",", "&", "#", "@", ";"]
+
+_LETTER_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿĀ-žŽ]+", re.UNICODE)
+
+def _is_compound_two_word_hyphen(s: str) -> bool:
+    # e.g., "Jan-Novák" (no spaces, exactly two letter sequences joined by a single hyphen)
+    if " " in s:
+        return False
+    parts = s.split("-")
+    if len(parts) != 2:
+        return False
+    return bool(_LETTER_RE.fullmatch(parts[0]) and _LETTER_RE.fullmatch(parts[1]))
+
+def _cut_after_separators(s: str) -> str:
+    # Find first separator index with special handling for hyphens
+    first_idx = len(s)
+
+    # Hyphen: treat as separator only if spaced (e.g., " - ", " -X", "X- ")
+    hyphen_idx = -1
+    for i, ch in enumerate(s):
+        if ch != '-':
+            continue
+        left = s[i-1] if i > 0 else ' '
+        right = s[i+1] if i + 1 < len(s) else ' '
+        if left.isspace() or right.isspace():
+            hyphen_idx = i
+            break
+    if hyphen_idx != -1:
+        first_idx = min(first_idx, hyphen_idx)
+
+    # Other separators
+    for ch in _SEP_CHARS:
+        i = s.find(ch)
+        if i != -1:
+            first_idx = min(first_idx, i)
+
+    if first_idx != len(s):
+        s = s[:first_idx]
+    return s
+
+def clean_name_line(raw: str) -> Optional[str]:
+    # Apply title stripping first
+    s = strip_titles_from_name_line(raw)
+    if not s:
+        return None
+    # Normalize to lowercase first
+    s = s.lower()
+    
+    # Quick checks before expensive operations
+    # Discard if contains any digits (early exit)
+    if any(ch.isdigit() for ch in s):
+        return None
+    
+    # Normalize dashes
+    s = _normalize_dashes(s)
+    # Filter to allowed characters only (Czech, Slovak, Polish, Russian, English)
+    s = _filter_allowed_chars(s)
+    if not s:
+        return None
+    # Remove anything in quotes
+    s = _remove_quoted_segments(s)
+    # Specific leftover title case: ing.arch.
+    s = re.sub(r"\bing\.arch\.?\b", " ", s, flags=re.IGNORECASE)
+    # Remove everything after first separator (with hyphen exception)
+    s = _cut_after_separators(s)
+    # Trim and strip trailing punctuation that may remain (preserve internal hyphens)
+    s = s.strip()
+    s = re.sub(r"[\s\.,;&#@]+$", "", s)
+    
+    # Discard if too short or empty (early exit)
+    if not s or len(s) < 3:
+        return None
+    
+    # Normalize diacritics once for all token-based checks
+    norm = unicodedata.normalize('NFD', s)
+    norm = ''.join(ch for ch in norm if not unicodedata.combining(ch))
+    
+    # Split once and reuse
+    tokens = norm.split()
+    if not tokens:
+        return None
+    
+    # Discard if first word is a single character followed by more content
+    if len(tokens) >= 2 and len(tokens[0]) == 1:
+        return None
+    
+    # Discard if starts with only "a" as first word
+    if tokens[0] == "a" and len(tokens) >= 1:
+        return None
+    
+    # Discard if standalone conjunction "a" appears anywhere
+    if 'a' in tokens:
+        return None
+    
+    # Fast substring checks for occupational/medical markers
+    if any(k in norm for k in (
+        "kancelar", "advokat", "doktor", "lekar", "zverolekar",
+        "zdravotnicke", "zdravotni", "zarizeni", "ordinace",
+        "fitnes", "komunita", "biuro", "bizarre", "ambulace", "cinnost"
+    )):
+        return None
+    
+    # Token-based checks (set lookup is faster than repeated 'in' checks)
+    blocked_tokens = {
+        "lekar", "zverolekar", "lekarstvi", "lekarka", "lekaru",
+        "sdruzeni", "predseda", "ceska", "cesky", "armada", "institut",
+        "je", "diplom", "firma", "biuro", "bizarre", "ambulace", "cinnost"
+    }
+    if any(t in blocked_tokens for t in tokens):
+        return None
+    
+    # Discard if starts with "fit"
+    if tokens[0].startswith("fit"):
+        return None
+    
+    # Degenerate repetition check
+    if len(tokens) >= 2 and len(set(tokens)) == 1:
+        return None
+    
+    return s
 
 
 def _supports_color() -> bool:
@@ -281,7 +512,22 @@ def process_category(
                 print(f"{C.YELLOW}[{label}]{C.RESET} WARNING: source not found: {path}")
                 continue
             print(f"{C.BLUE}[{label}]{C.RESET} reading: {path} (fraction={fraction})")
-            yield from iter_source_lines(path, fraction, seed)
+            if label == "name":
+                # Inline version of iter_source_lines with title stripping
+                path_abs = os.path.abspath(path)
+                h = hashlib.blake2b(path_abs.encode("utf-8"), digest_size=8).digest()
+                path_hash = int.from_bytes(h, "little") & 0xFFFFFFFF
+                rng = random.Random((seed & 0xFFFFFFFF) ^ path_hash)
+                with io.open(path, "r", encoding="utf-8", errors="ignore") as f:
+                    for raw in f:
+                        if fraction < 1.0 and rng.random() >= fraction:
+                            continue
+                        cleaned = clean_name_line(raw)
+                        s = normalize_line(cleaned) if cleaned else None
+                        if s:
+                            yield s
+            else:
+                yield from iter_source_lines(path, fraction, seed)
 
     return create_sorted_chunks(source_iter(), temp_dir, label, chunk_size, log_every)
 

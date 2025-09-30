@@ -1,19 +1,37 @@
 ﻿using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using System.Text.Json;
+using System.Linq;
+using System.Collections.Generic;
+using System.Text;
 using Tokenizers;
 using Tokenizers.DotNet;
 
 public class Program
 {
-    // Corresponds to the labels used during Python training: 0=Name, 1=Nickname, 2=Company
-    private static readonly string[] Labels = { "Name", "Nickname", "Company" };
+    // Token-level IOB tag mapping (must match Python TAG_MAP indices)
+    private static readonly string[] IdToTag = new[]
+    {
+        "O",      // 0
+        "B-PER",  // 1
+        "I-PER",  // 2
+        "B-NICK", // 3
+        "I-NICK", // 4
+        "B-ORG",  // 5
+        "I-ORG",  // 6
+        "B-LOC",  // 7
+        "I-LOC",  // 8
+        "B-TIT",  // 9
+        "I-TIT"   // 10
+    };
+
     private const int MaxLength = 128; // Must match the MAX_LEN from Python training
+    private const int CharMaxLen = 24; // Must match CHAR_MAX_LEN in Python
 
     public static void Main(string[] args)
     {
         Console.WriteLine("--- C# DEMO SCRIPT STARTED ---");
-        Console.WriteLine("--- ONNX Name Classifier Demo ---");
+        Console.WriteLine("--- ONNX NER Demo (token-level) ---");
 
         var assemblyLocation = System.Reflection.Assembly.GetExecutingAssembly().Location;
         var executionPath = Path.GetDirectoryName(assemblyLocation)!;
@@ -28,29 +46,24 @@ public class Program
             return;
         }
 
-        // --- Correct Tokenizer Loading ---
-        // 1. Read the JSON file content
+        // --- Tokenizer ---
         var tokenizerJson = File.ReadAllText(tokenizerPath);
-        
-        // 2. Create the tokenizer instance from the JSON content
-        var tokenizer = new Tokenizer("custom-bpe-tokenizer.json");
-
-        // 3. Manually parse the JSON to get the Pad Token ID, as GetPadTokenId() doesn't exist
+        var tokenizer = new Tokenizer(tokenizerPath);
         var padTokenId = GetTokenIdFromJson(tokenizerJson, "[PAD]");
 
-        // Initialize the ONNX runtime session
+        // --- ONNX session ---
         using var session = new InferenceSession(modelPath);
 
         var testInputs = new List<string>
         {
-            "John Smith",
+            "ing. jan novák phd",
+            "mvdr. markéta tučková , ten tenths media gmbh",
+            "Pepa, Novák",
             "Honza Stránský",
             "1.KFC Dačice",
             "xX_SuperGamer_Xx",
             "Microsoft",
-            "Dr. Eleanor Vance",
-            "The quick brown fox",
-            "Staglin",
+            "Rev. John Doe, Ph.D.",
             "lordoffuel"
         };
 
@@ -65,39 +78,104 @@ public class Program
 
     private static void Predict(InferenceSession session, Tokenizer tokenizer, string text, long padTokenId)
     {
-        var encodedIds = tokenizer.Encode(text);
-        var inputIds = encodedIds.Select(id => (long)id).ToList();
+        var encoding = tokenizer.Encode(text);
+        var ids = encoding.Ids.Select(i => (long)i).ToList();
+        var wordIds = encoding.WordIds?.ToList() ?? Enumerable.Repeat<long?>(null, encoding.Ids.Count).ToList();
+        var tokens = encoding.Tokens.ToList();
 
-        while (inputIds.Count < MaxLength)
+        // Pad/truncate
+        if (ids.Count > MaxLength)
         {
-            inputIds.Add(padTokenId);
+            ids = ids.Take(MaxLength).ToList();
+            wordIds = wordIds.Take(MaxLength).ToList();
+            tokens = tokens.Take(MaxLength).ToList();
+        }
+        else if (ids.Count < MaxLength)
+        {
+            var padCount = MaxLength - ids.Count;
+            ids.AddRange(Enumerable.Repeat(padTokenId, padCount));
+            wordIds.AddRange(Enumerable.Repeat<long?>(null, padCount));
+            tokens.AddRange(Enumerable.Repeat("[PAD]", padCount));
         }
 
-        if (inputIds.Count > MaxLength)
+        var inputTensor = new DenseTensor<long>(ids.ToArray(), new[] { 1, MaxLength });
+        // Prepare byte_ids [1, L, CharMaxLen]
+        var byteMatrix = new long[1, MaxLength, CharMaxLen];
+        for (int i = 0; i < MaxLength; i++)
         {
-            inputIds = inputIds.Take(MaxLength).ToList();
+            string piece = tokens[i];
+            if (piece.StartsWith("##")) piece = piece.Substring(2);
+            var bytes = Encoding.UTF8.GetBytes(piece);
+            int len = Math.Min(bytes.Length, CharMaxLen);
+            for (int j = 0; j < len; j++) byteMatrix[0, i, j] = bytes[j];
+            for (int j = len; j < CharMaxLen; j++) byteMatrix[0, i, j] = 0;
         }
 
-        var dimensions = new[] { 1, MaxLength };
-        var inputTensor = new DenseTensor<long>(inputIds.ToArray(), dimensions);
-        
         var inputs = new List<NamedOnnxValue>
         {
-            NamedOnnxValue.CreateFromTensor("input_ids", inputTensor)
+            NamedOnnxValue.CreateFromTensor("input_ids", inputTensor),
+            NamedOnnxValue.CreateFromTensor("byte_ids", new DenseTensor<long>(byteMatrix, new[] { 1, MaxLength, CharMaxLen }))
         };
 
         using var results = session.Run(inputs);
-        var outputTensor = results.First().AsTensor<float>();
+        var output = results.First().AsTensor<float>(); // [1, L, C]
 
-        var probabilities = Softmax(outputTensor.ToArray());
-        var predictedIndex = Array.IndexOf(probabilities, probabilities.Max());
-        var predictedLabel = Labels[predictedIndex];
-        var confidence = probabilities[predictedIndex];
+        var dims = output.Dimensions.ToArray();
+        int L = dims[1];
+        int C = dims[2];
+
+        // Argmax per position
+        var flat = output.ToArray();
+        var predIdx = new int[L];
+        for (int i = 0; i < L; i++)
+        {
+            int arg = 0;
+            float best = float.NegativeInfinity;
+            int baseIdx = i * C; // row-major within last dim
+            for (int j = 0; j < C; j++)
+            {
+                float v = flat[baseIdx + j];
+                if (v > best) { best = v; arg = j; }
+            }
+            predIdx[i] = arg;
+        }
+        var predTags = predIdx.Select(i => i >= 0 && i < IdToTag.Length ? IdToTag[i] : "O").ToArray();
+        predTags = EnforceIob(predTags);
+
+        // Word-level mapping: take first subtoken tag for each word
+        var words = new List<string>();
+        var wordTags = new List<string>();
+        long? prevWid = null;
+        string currentWord = "";
+        for (int i = 0; i < L; i++)
+        {
+            var wid = wordIds[i];
+            if (wid == null) continue;
+            if (prevWid == null || wid != prevWid)
+            {
+                words.Add(NormalizePieces(tokens, i));
+                wordTags.Add(predTags[i]);
+                prevWid = wid;
+            }
+        }
+
+        var entities = ExtractEntities(words, wordTags);
 
         Console.WriteLine($"\nInput: \"{text}\"");
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"  => Predicted: {predictedLabel} (Confidence: {confidence:P2})");
-        Console.ResetColor();
+        Console.WriteLine("Words:   " + string.Join(" | ", words));
+        Console.WriteLine("Tags:    " + string.Join(" | ", wordTags));
+        if (entities.Count > 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("Entities:");
+            foreach (var (et, ty) in entities)
+                Console.WriteLine($" - {et} [{ty}]");
+            Console.ResetColor();
+        }
+        else
+        {
+            Console.WriteLine("Entities: (none)");
+        }
     }
     
     // Manually parses the tokenizer JSON to find a specific token's ID.
@@ -117,11 +195,72 @@ public class Program
         return 0;
     }
 
-    private static float[] Softmax(float[] logits)
+    private static string[] EnforceIob(string[] tags)
     {
-        var maxLogit = logits.Max();
-        var exps = logits.Select(l => MathF.Exp(l - maxLogit)).ToArray();
-        var sumExps = exps.Sum();
-        return exps.Select(e => e / sumExps).ToArray();
+        var fixedTags = new string[tags.Length];
+        string prevType = null;
+        bool inside = false;
+        for (int i = 0; i < tags.Length; i++)
+        {
+            var t = tags[i];
+            if (t == "O") { fixedTags[i] = "O"; prevType = null; inside = false; continue; }
+            var parts = t.Split('-');
+            if (parts.Length != 2) { fixedTags[i] = "O"; prevType = null; inside = false; continue; }
+            var bio = parts[0];
+            var ent = parts[1];
+            if (bio == "B") { fixedTags[i] = $"B-{ent}"; prevType = ent; inside = true; }
+            else {
+                if (!inside || prevType != ent) { fixedTags[i] = $"B-{ent}"; prevType = ent; inside = true; }
+                else { fixedTags[i] = $"I-{ent}"; }
+            }
+        }
+        return fixedTags;
+    }
+
+    private static string NormalizePieces(IReadOnlyList<string> tokens, int index)
+    {
+        // Join just the first piece token; full reconstruction across multiple pieces requires word offsets.
+        var t = tokens[index];
+        return t.StartsWith("##") ? t.Substring(2) : t;
+    }
+
+    private static List<(string, string)> ExtractEntities(List<string> words, List<string> wordTags)
+    {
+        var entities = new List<(string, string)>();
+        var current = new List<string>();
+        string currentType = null;
+        for (int i = 0; i < words.Count; i++)
+        {
+            var t = wordTags[i];
+            if (t == "O")
+            {
+                if (current.Count > 0)
+                {
+                    entities.Add((string.Join(" ", current), currentType ?? ""));
+                    current.Clear();
+                    currentType = null;
+                }
+                continue;
+            }
+            var parts = t.Split('-');
+            var bio = parts[0];
+            var ent = parts.Length > 1 ? parts[1] : "";
+            if (bio == "B" || (currentType != null && ent != currentType))
+            {
+                if (current.Count > 0)
+                    entities.Add((string.Join(" ", current), currentType ?? ""));
+                current.Clear();
+                current.Add(words[i]);
+                currentType = ent;
+            }
+            else
+            {
+                current.Add(words[i]);
+                currentType = ent;
+            }
+        }
+        if (current.Count > 0)
+            entities.Add((string.Join(" ", current), currentType ?? ""));
+        return entities;
     }
 }

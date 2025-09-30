@@ -40,7 +40,7 @@ def validate_model():
     # 2. Load model, tokenizer, and validation data
     print(f"Loading model from {ONNX_MODEL_PATH}")
     session = ort.InferenceSession(ONNX_MODEL_PATH)
-    input_name = session.get_inputs()[0].name
+    input_name_ids = session.get_inputs()[0].name
 
     print(f"Loading tokenizer from {TOKENIZER_PATH}")
     tokenizer = Tokenizer.from_file(TOKENIZER_PATH)
@@ -96,7 +96,23 @@ def validate_model():
             aligned_labels = np.pad(aligned_labels, (0, pad_length), mode='constant', constant_values=-100)
             
         # Create ONNX-compatible input
-        onnx_input = {input_name: np.array([input_ids], dtype=np.int64)}
+        # Build byte ids per token (UTF-8), capped to CHAR_MAX_LEN used in training
+        CHAR_MAX_LEN = 24
+        byte_rows = []
+        for i in range(len(input_ids)):
+            if i < len(word_ids) and word_ids[i] is not None and i < len(encoding.tokens):
+                tok = encoding.tokens[i]
+                substr = tok[2:] if tok.startswith("##") else tok
+            else:
+                substr = ""
+            b = list(substr.encode('utf-8'))[:CHAR_MAX_LEN]
+            if len(b) < CHAR_MAX_LEN:
+                b += [0] * (CHAR_MAX_LEN - len(b))
+            byte_rows.append(b)
+
+        onnx_input = {
+            input_name_ids: np.array([input_ids], dtype=np.int64),
+        }
 
         # Run inference
         logits_onnx = session.run(None, onnx_input)[0] # Shape: (1, MAX_LEN, NUM_TAGS)

@@ -20,7 +20,40 @@ pip install -r requirements.txt
 echo.
 
 echo [3/3] Training model and exporting to ONNX...
-python train.py
+
+:menu
+echo.
+echo Select the number of training steps:
+echo 1 - 20k (tiny)
+echo 2 - 50k (small)
+echo 3 - 100k (medium)
+echo 4 - 300k (huge)
+echo 5 - full (no step limit)
+echo.
+
+set "STEPS_ARG="
+set /p "choice=Enter your choice (1-5): "
+
+if "%choice%"=="1" set "STEPS_ARG=--max-steps=20000"
+if "%choice%"=="2" set "STEPS_ARG=--max-steps=50000"
+if "%choice%"=="3" set "STEPS_ARG=--max-steps=100000"
+if "%choice%"=="4" set "STEPS_ARG=--max-steps=300000"
+if "%choice%"=="5" set "STEPS_ARG="
+
+set "VALID_CHOICE="
+if "%choice%"=="1" set VALID_CHOICE=1
+if "%choice%"=="2" set VALID_CHOICE=1
+if "%choice%"=="3" set VALID_CHOICE=1
+if "%choice%"=="4" set VALID_CHOICE=1
+if "%choice%"=="5" set VALID_CHOICE=1
+
+if not defined VALID_CHOICE (
+    echo Invalid choice. Please try again.
+    goto menu
+)
+
+echo.
+python train.py --use-wandb --epochs=1 %STEPS_ARG%
 echo.
 
 echo =================================================

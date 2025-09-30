@@ -3,744 +3,138 @@ import random
 import argparse
 import pandas as pd
 from typing import List, Tuple
-import unicodedata
+
+# Import strategy configuration
+from remix_config import get_active_strategies, STRATEGY_REQUIREMENTS
+
+# Import constants from strategies.utils
+from strategies.utils import (
+    B_PER, I_PER, B_ORG, I_ORG, B_NICK, I_NICK, B_TIT, I_TIT, O,
+    cripple_entity, cripple_iy, has_only_allowed_chars, COMPANY_SUFFIXES, TITLES_BEFORE, TITLES_AFTER
+)
 
 # --- Configuration ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Define IOB tags
-B_PER, I_PER = "B-PER", "I-PER"
-B_ORG, I_ORG = "B-ORG", "I-ORG"
-B_NICK, I_NICK = "B-NICK", "I-NICK"
-B_TIT, I_TIT = "B-TIT", "I-TIT"
-O = "O"
+# Helper import for title stripping (used below)
+import unicodedata
 
-# List of Czech and common international company suffixes
-COMPANY_SUFFIXES = [
-    "s.r.o.", "a.s.", "v.o.s.", "k.s.", "z.s.", "o.p.s.", "spol. s r.o.", "v likvidaci", "družstvo",
-    "LLC", "Ltd.", "Inc.", "GmbH", "S.A.", "Corp.", "Limited", "Incorporated"
-]
+# --- Data Loading Functions ---
 
-# Comprehensive lists of titles based on user-provided C# code
-TITLES_BEFORE = [
-    "Pan", "Paní", "Bc.", "BcA.", "Ing.", "Ing. arch.", "MUDr.", "MDDr.", "MVDr.",
-    "MgA.", "Mgr.", "JUDr.", "PhDr.", "RNDr.", "PharmDr.", "ThLic.", "ThDr.",
-    "akad. arch.", "ak. mal.", "ak. soch.", "MSDr.", "PaedDr.", "PhMr.", "RCDr.",
-    "RSDr.", "RTDr.", "ThMgr.", "as.", "odb. as.", "doc.", "prof.", "voj.",
-    "svob.", "sv.", "des.", "čet.", "rtn.", "rtm.", "nrtm.", "prap.", "nprap.",
-    "št. prap.", "šprap.", "por.", "npor.", "kpt.", "mjr.", "pplk.", "plk.",
-    "brig.gen.", "genmjr.", "genpor.", "arm.gen.", "ppor.", "škpt.", "šrtm.",
-    "gen.", "genplk.", "Rev.", "Very Rev.", "Most Rev.", "Rt. Rev.", "Right Rev.",
-    "Fr.", "Father", "Sister", "Br.", "Brother", "Dcn.", "Deacon", "Bp.", "Bishop",
-    "Abp.", "Archbishop", "Msgr.", "Monsignor", "Card.", "Cardinal", "Dom", "Abbot",
-    "Mother", "Pastor", "Padre"
-]
-TITLES_AFTER = [
-    "Ph.D.", "DSc.", "CSc.", "Dr.", "DrSc.", "Th.D.", "DiS.", "dr. h. c.",
-    "prof. h. c.", "MBA", "LL.M.", "Jr.", "Sr.", "PP.", "J.Em.", "J.Exc.",
-    "J.M.", "Vdp.", "AMPLMUS", "A.R.D.", "Vldp.", "R.D.", "Dp.", "Vp.",
-    "Rev. dom.", "Ct.p.", "V.G.", "P.A.", "J.C.D.", "S.T.D.", "D.D.", "Dr. eccl."
-]
-
-
-# --- Allowed character filtering (to protect tokenizer vocab) ---
-# We keep only: a-z, digits, limited punctuation, and specific diacritics for cs/sk/pl plus Russian Cyrillic.
-_LATIN_BASE = "abcdefghijklmnopqrstuvwxyz"
-_CS = "áčďéěíňóřšťúůýž"
-_SK = "áäčďéíĺľňóôŕšťúýž"
-_PL = "ąćęłńóśźż"
-_RUS_CYR_RANGE = ("\u0430", "\u044f")  # 'а'..'я'
-_RUS_EXTRA = "ё"  # include 'ё'
-_DIGITS = "0123456789"
-_PUNCT = " .,'\";-_/()[]@:+&|"  # minimal set used by our patterns (incl. semicolon and quotes)
-
-_ALLOWED_LATIN = set(_LATIN_BASE + _CS + _SK + _PL)
-_ALLOWED_CYR = set(chr(c) for c in range(ord(_RUS_CYR_RANGE[0]), ord(_RUS_CYR_RANGE[1]) + 1)) | set(_RUS_EXTRA)
-_ALLOWED = _ALLOWED_LATIN | _ALLOWED_CYR | set(_DIGITS) | set(_PUNCT)
-
-_MAP_CHARS = {
-    # quotes
-    "“": '"', "”": '"', "„": '"', "‟": '"', "‹": "'", "›": "'", "’": "'", "‚": "'",
-    # dashes
-    "–": "-", "—": "-", "−": "-",
-    # spaces
-    "\u00A0": " ",  # nbsp
-}
-
-def _map_char(c: str) -> str:
-    return _MAP_CHARS.get(c, c)
-
-def _is_allowed(c: str) -> bool:
-    return c in _ALLOWED
-
-def clean_text_and_tags_for_tokenizer(text: str, tags_str: str) -> tuple[str, str]:
-    """
-    Normalize and filter text to an allowed charset. Preserve tag alignment by
-    dropping words that become empty after filtering.
-    - Applies NFKC, lowercases, maps fancy quotes/dashes to ASCII
-    - Keeps only: a-z, cs/sk/pl diacritics, Russian Cyrillic, digits, selected punctuation
-    - Collapses repeated spaces
-    """
-    if not text:
-        return "", ""
-
-    # Normalize and lowercase first
-    text = unicodedata.normalize('NFKC', text).lower()
-
-    words = text.split()
-    tags = tags_str.split()
-    if len(tags) != len(words):
-        # In case of mismatch, fall back to whole-string filtering and keep tags as-is if lengths match after split
-        filtered = []
-        for ch in text:
-            ch_m = _map_char(ch)
-            if unicodedata.category(ch_m)[0] in ('C',):
-                # Drop control/nonspacing format chars
-                continue
-            if _is_allowed(ch_m):
-                filtered.append(ch_m)
-            elif ch_m in {"\t", "\n", "\r"}:
-                filtered.append(" ")
-        s = "".join(filtered)
-        s = " ".join(s.split())
-        # After filtering, rebuild tags to match words length if possible
-        words2 = s.split()
-        if len(words2) == len(tags):
-            return s, " ".join(tags)
-        return "", ""
-
-    out_words: list[str] = []
-    out_tags: list[str] = []
-    for w, t in zip(words, tags):
-        # Map per-char and filter
-        buf = []
-        for ch in w:
-            ch_m = _map_char(ch)
-            if unicodedata.category(ch_m)[0] in ('C',):
-                continue  # drop controls/format
-            if _is_allowed(ch_m):
-                buf.append(ch_m)
-        w2 = "".join(buf).strip(" ")
-        if w2:
-            out_words.append(w2)
-            out_tags.append(t)
-
-    if not out_words or len(out_words) != len(out_tags):
-        return "", ""
-    cleaned_text = " ".join(out_words)
-    cleaned_tags = " ".join(out_tags)
-    return cleaned_text, cleaned_tags
-
-
-def cripple_entity(text: str) -> str:
-    """
-    Introduces noise into a name or company name, like typos or missing diacritics.
-    Lowercasing is handled by the tokenizer's normalizer later.
-    """
-    # 1. Probabilistically remove diacritics (very common)
-    if random.random() < 0.5:
-        # Decompose into base character + combining mark, then remove combining marks
-        nfkd_form = unicodedata.normalize('NFD', text)
-        text = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
-
-    # 2. Probabilistically introduce one typo
-    if random.random() < 0.2 and len(text) > 2:
-        typo_type = random.choice(["delete", "substitute", "swap"])
-        pos = random.randint(0, len(text) - 1)
-
-        if typo_type == "delete":
-            text = text[:pos] + text[pos+1:]
-        elif typo_type == "substitute":
-            random_char = random.choice("abcdefghijklmnopqrstuvwxyz")
-            text = text[:pos] + random_char + text[pos+1:]
-        elif typo_type == "swap" and pos < len(text) - 1:
-            text = text[:pos] + text[pos+1] + text[pos] + text[pos+2:]
-            
-    return text
-
-
-def cripple_text(text: str) -> str:
-    """Randomly introduces common variations/typos into a string."""
-    text = text
-    # Action 1: Remove dots
-    if random.random() < 0.4:
-        text = text.replace(".", "")
-    
-    # Action 2: Add/remove spaces around dots (if they still exist)
-    if "." in text and random.random() < 0.3:
-        text = text.replace(". ", ".").replace(".", ". ")
-
-    # Action 3: Change case
-    if random.random() < 0.2:
-        text = text.upper()
-    
-    # Action 4: Collapse spaces
-    text = " ".join(text.split())
-
-    return text
-
-def tag_entity(text: str, base_tag: str) -> Tuple[List[str], List[str]]:
-    """Splits text into words and assigns IOB tags."""
-    words = text.split()
-    if not words:
-        return [], []
-    
-    tags = [f"B-{base_tag}"]
-    tags.extend([f"I-{base_tag}"] * (len(words) - 1))
-    return words, tags
-
-def tag_title_text(title_text: str) -> Tuple[List[str], List[str]]:
-    """Tokenize a title string and tag it as TIT (B-TIT/I-TIT)."""
-    words = title_text.split()
-    if not words:
-        return [], []
-    tags = [B_TIT] + [I_TIT] * (len(words) - 1)
-    return words, tags
-
-def corrupt_title_string(title: str) -> str:
-    """Produce realistic corruptions of titles: missing/extra dots, spacing, casing, minor typos."""
-    s = title
-    # Random casing variations
-    r = random.random()
-    if r < 0.10:
-        s = s.upper()
-    elif r < 0.20:
-        s = s.lower()
-    # Missing dots or extra dots
-    if random.random() < 0.35:
-        s = s.replace(".", "")
-    elif random.random() < 0.05:
-        s = s.replace(".", "..")
-    # Random extra spaces around dots/abbrev parts
-    if random.random() < 0.2:
-        s = s.replace(". ", ".").replace(".", ". ")
-    # Minor typo: swap or substitute a character (letters only)
-    if random.random() < 0.10 and len(s) > 2:
-        idx = random.randint(0, len(s) - 2)
-        if s[idx].isalpha() and s[idx+1].isalpha():
-            s = s[:idx] + s[idx+1] + s[idx] + s[idx+2:]
-    elif random.random() < 0.10 and len(s) > 1:
-        idx = random.randint(0, len(s) - 1)
-        if s[idx].isalpha():
-            replacement = random.choice("abcdefghijklmnopqrstuvwxyz")
-            s = s[:idx] + replacement + s[idx+1:]
-    # Normalize whitespace
-    s = " ".join(s.split())
-    return s
-
-def load_entities(path: str) -> List[str]:
-    """Loads a list of entities from a file, one per line."""
+def load_entities(path: str, validator: callable = None) -> (List[str], int, int):
+    """Loads a list of entities from a file, one per line, with optional validation."""
     if not os.path.exists(path):
         print(f"Warning: Data file not found at {path}. This entity type will be skipped.")
-        return []
+        return [], 0, 0
+    
+    entities = []
+    initial_count = 0
+    removed_count = 0
+    filename = os.path.basename(path)
     with open(path, "r", encoding="utf-8") as f:
-        return [line.strip() for line in f if line.strip()]
+        for i, line in enumerate(f):
+            if (i + 1) % 500000 == 0:
+                print(f"  Filtering {filename}: processed {(i+1):,} lines...", flush=True)
 
-def remix_single_entity(names: List[str], companies: List[str], nicknames: List[str]) -> Tuple[str, str]:
-    """Creates a sample with a single entity."""
-    entity_type = random.choice(["name", "company", "nickname"])
-    
-    text, tag = "", ""
-    if entity_type == "name" and names:
-        text = random.choice(names)
-        _, tags = tag_entity(text, "PER")
-        tag = " ".join(tags)
-    elif entity_type == "company" and companies:
-        text = random.choice(companies)
-        _, tags = tag_entity(text, "ORG")
-        tag = " ".join(tags)
-    elif entity_type == "nickname" and nicknames:
-        text = random.choice(nicknames)
-        _, tags = tag_entity(text, "NICK")
-        tag = " ".join(tags)
-        
-    return text, tag
+            initial_count += 1
+            entity = line.strip()
+            if not entity:
+                continue
 
-def remix_name_with_title(names: List[str]) -> Tuple[str, str]:
-    """
-    Adds one or more titles to a name, before and/or after, with corruption and wrong placements.
-    Titles are tagged as TIT, names as PER. Separators and commas are O.
-    """
-    if not names:
-        return "", ""
-    name_text = random.choice(names)
-    name_words, name_tags = tag_entity(name_text, "PER")
-    
-    # --- Decide on the complexity of the title pattern ---
-    pattern_roll = random.random()
-
-    final_words = []
-    final_tags = []
-
-    # Case 1: Simple, single title (most common) - 40% chance
-    if pattern_roll < 0.6:
-        place_it_wrong = random.random() < 0.20
-        place_before = random.random() < 0.7 
-
-        if not place_it_wrong:
-            if place_before and TITLES_BEFORE:
-                title = corrupt_title_string(random.choice(TITLES_BEFORE))
-                title_words, title_tags = tag_title_text(title)
-                final_words = title_words + name_words
-                final_tags = title_tags + name_tags
-            elif TITLES_AFTER:
-                title = corrupt_title_string(random.choice(TITLES_AFTER))
-                title_words, title_tags = tag_title_text(title)
-                final_words = name_words + [","] + title_words
-                final_tags = name_tags + [O] + title_tags
-        else: # Intentionally place it wrong
-            if place_before and TITLES_BEFORE:
-                # Wrongly place before-name title after the name
-                title = corrupt_title_string(random.choice(TITLES_BEFORE))
-                title_words, title_tags = tag_title_text(title)
-                final_words = name_words + [","] + title_words
-                final_tags = name_tags + [O] + title_tags
-            elif TITLES_AFTER:
-                # Wrongly place after-name title before the name
-                title = corrupt_title_string(random.choice(TITLES_AFTER))
-                title_words, title_tags = tag_title_text(title)
-                final_words = title_words + name_words
-                final_tags = title_tags + name_tags
-
-    # Case 2: Two titles (less common) - 30% chance
-    elif pattern_roll < 0.9 and len(TITLES_BEFORE) > 1 and len(TITLES_AFTER) > 1:
-        sub_pattern = random.choice(["before_before", "after_after", "before_after"])
-
-        if sub_pattern == "before_before":
-            title1, title2 = random.sample(TITLES_BEFORE, 2)
-            t1_words, t1_tags = tag_title_text(corrupt_title_string(title1))
-            t2_words, t2_tags = tag_title_text(corrupt_title_string(title2))
-            final_words = t1_words + t2_words + name_words
-            final_tags = t1_tags + t2_tags + name_tags
-        elif sub_pattern == "after_after":
-            title1, title2 = random.sample(TITLES_AFTER, 2)
-            t1_words, t1_tags = tag_title_text(corrupt_title_string(title1))
-            t2_words, t2_tags = tag_title_text(corrupt_title_string(title2))
-            final_words = name_words + [","] + t1_words + [","] + t2_words
-            final_tags = name_tags + [O] + t1_tags + [O] + t2_tags
-        else: # "before_after"
-            title1 = random.choice(TITLES_BEFORE)
-            title2 = random.choice(TITLES_AFTER)
-            t1_words, t1_tags = tag_title_text(corrupt_title_string(title1))
-            t2_words, t2_tags = tag_title_text(corrupt_title_string(title2))
-            final_words = t1_words + name_words + [","] + t2_words
-            final_tags = t1_tags + name_tags + [O] + t2_tags
+            if validator and not validator(entity):
+                removed_count += 1
+                continue
+            entities.append(entity)
             
-    # Case 3: Many titles (3–8 total), mix before and after, commas optional - 8% chance
-    elif pattern_roll < 0.98:
-        # Decide how many total titles
-        total_titles = random.randint(3, 8)
-        # Prefer both sides populated
-        before_count = random.randint(1, max(1, total_titles - 1))
-        after_count = total_titles - before_count
+    return entities, initial_count, removed_count
 
-        # Build before titles (mostly from TITLES_BEFORE, with some wrong placements)
-        before_words: list[str] = []
-        before_tags: list[str] = []
-        for _ in range(before_count):
-            src_list = TITLES_BEFORE if random.random() > 0.2 else TITLES_AFTER
-            title = corrupt_title_string(random.choice(src_list))
-            tw, tt = tag_title_text(title)
-            # Occasionally separate multiple titles with comma
-            if before_words and random.random() < 0.3:
-                before_words += [","]
-                before_tags += [O]
-            before_words += tw
-            before_tags += tt
+def load_words_corpus() -> List[str]:
+    """Load all .txt word lists from data/classes/sources/words and merge them."""
+    words_dir = os.path.join(SCRIPT_DIR, "data", "classes", "sources", "words")
+    merged: List[str] = []
+    if not os.path.isdir(words_dir):
+        return merged
+    for fname in os.listdir(words_dir):
+        if not fname.lower().endswith('.txt'):
+            continue
+        # Only include filtered lists, skip raw sources
+        if "filtered" not in fname.lower():
+            continue
+        path = os.path.join(words_dir, fname)
+        entities, _, _ = load_entities(path)
+        merged.extend(entities)
+    return merged
 
-        # Build after titles (mostly from TITLES_AFTER, with some wrong placements)
-        after_words: list[str] = []
-        after_tags: list[str] = []
-        for _ in range(after_count):
-            src_list = TITLES_AFTER if random.random() > 0.2 else TITLES_BEFORE
-            title = corrupt_title_string(random.choice(src_list))
-            tw, tt = tag_title_text(title)
-            # Separate multiple after titles optionally with comma
-            if after_words and random.random() < 0.6:
-                after_words += [","]
-                after_tags += [O]
-            after_words += tw
-            after_tags += tt
+def load_org_types() -> List[str]:
+    """Load organization type terms (firma, společnost, lékárna, etc.)"""
+    path = os.path.join(SCRIPT_DIR, "data", "classes", "sources", "org_types.txt")
+    entities, _, _ = load_entities(path)
+    return entities
 
-        # Optionally place a comma between name and after titles (but sometimes not, to allow patterns like 'ing. name phd')
-        place_name_after_comma = random.random() < 0.6
+def _normalize_dotless_token(s: str) -> str:
+    # Cache normalized tokens to avoid repeated work
+    if not hasattr(_normalize_dotless_token, 'cache'):
+        _normalize_dotless_token.cache = {}
+    if s in _normalize_dotless_token.cache:
+        return _normalize_dotless_token.cache[s]
+    result = s.strip().lower()
+    result = result.replace('.', '')
+    result = unicodedata.normalize('NFD', result)
+    result = ''.join(ch for ch in result if not unicodedata.combining(ch))
+    _normalize_dotless_token.cache[s] = result
+    return result
 
-        final_words = before_words + name_words + ([","] if (after_words and place_name_after_comma) else []) + after_words
-        final_tags = before_tags + name_tags + ([O] if (after_words and place_name_after_comma) else []) + after_tags
 
-    # Case 4: Duplicated title (e.g., Mgr. et Mgr.) - remaining chance
-    else:
-        if TITLES_BEFORE:
-            title = corrupt_title_string(random.choice(["Mgr.", "Ing."]))
-            separator = random.choice(["et", "a"])
-            title_words, title_tags = tag_title_text(title)
-            final_words = title_words + [separator] + title_words + name_words
-            final_tags = title_tags + [O] + title_tags + name_tags
-    
-    # Final fallback if something went wrong
-    if not final_words:
-        return name_text, " ".join(name_tags)
+def _build_title_norm() -> set:
+    title_tokens: List[str] = []
+    for t in TITLES_BEFORE + TITLES_AFTER:
+        title_tokens.extend(t.split())
+    return {_normalize_dotless_token(tok) for tok in title_tokens if tok}
+
+
+def load_names_strip_titles(path: str, validator: callable = None) -> (List[str], int, int):
+    """Load names and strip any tokens that match known titles (dotless match)."""
+    if not os.path.exists(path):
+        return [], 0, 0
         
-    return " ".join(final_words), " ".join(final_tags)
+    title_norm = _build_title_norm()
+    cleaned: List[str] = []
+    stripped = 0
+    initial_count = 0
+    removed_by_validator = 0
+    filename = os.path.basename(path)
 
-def remix_name_with_nickname(names: List[str], nicknames: List[str]) -> Tuple[str, str]:
-    """
-    Creates samples with a nickname placed before, inside, or after a real name,
-    using a wide variety of delimiters.
-    e.g., 'Matěj (lofcz) Štágl', '"lofcz" Matěj Štágl', 'Matěj Štágl - lofcz'
-    """
-    if not names or not nicknames:
-        return "", ""
-    
-    name_text = random.choice(names)
-    nickname_text = random.choice(nicknames)
-    
-    # Use simpler, single-word nicknames for cleaner patterns
-    if len(nickname_text.split()) > 1:
-        # Fallback to just the nickname if it's complex
-        _, nick_tags = tag_entity(nickname_text, "NICK")
-        return nickname_text, " ".join(nick_tags)
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+        initial_count = len(lines)
 
-    name_words, name_tags = name_text.split(), tag_entity(name_text, "PER")[1]
-    nick_words, nick_tags = nickname_text.split(), tag_entity(nickname_text, "NICK")[1]
-
-    DELIMITER_PAIRS = [
-        ('(', ')'), ('[', ']'), ('{', '}'),
-        ("'", "'"), ('"', '"'), ('„', '“'), 
-        ('`', '`'), ('-', '-'), ('_', '_'),
-        ('', '') # No delimiters
-    ]
-    
-    q_start, q_end = random.choice(DELIMITER_PAIRS)
-    
-    # Choose placement: before, inside, or after
-    placement = random.choice(["before", "inside", "after"])
-
-    # The "inside" pattern only makes sense for multi-word names
-    if len(name_words) < 2:
-        placement = random.choice(["before", "after"])
-
-    final_words, final_tags = [], []
-
-    # Helper to add delimiters if they exist
-    def wrap_with_delimiters(words, tags):
-        if q_start and q_end:
-            return [q_start] + words + [q_end], [O] + tags + [O]
-        elif q_start: # Handles single dash/underscore case
-             return [q_start] + words + [q_start], [O] + tags + [O]
-        return words, tags
-
-    wrapped_nick_words, wrapped_nick_tags = wrap_with_delimiters(nick_words, nick_tags)
-
-    if placement == "before":
-        final_words = wrapped_nick_words + name_words
-        final_tags = wrapped_nick_tags + name_tags
-    elif placement == "after":
-        final_words = name_words + wrapped_nick_words
-        final_tags = name_tags + wrapped_nick_tags
-    elif placement == "inside":
-        insert_pos = random.randint(1, len(name_words) - 1)
-        # Correctly tag the second part of the name with I-PER
-        name_tags[insert_pos:] = [I_PER] * len(name_tags[insert_pos:])
+    for idx, line in enumerate(lines):
+        if (idx + 1) % 100000 == 0 and idx > 0:
+            print(f"  Filtering and stripping titles from {filename}: {(idx+1):,}/{initial_count:,} processed...", flush=True)
         
-        final_words = name_words[:insert_pos] + wrapped_nick_words + name_words[insert_pos:]
-        final_tags = name_tags[:insert_pos] + wrapped_nick_tags + name_tags[insert_pos:]
+        line = line.strip()
+        if not line:
+            continue
 
-    return " ".join(final_words), " ".join(final_tags)
+        if validator and not validator(line):
+            removed_by_validator += 1
+            continue
 
-
-def remix_name_company_patterns(names: List[str], companies: List[str]) -> Tuple[str, str]:
-    """
-    Generates patterns like "Name - Company", "Company, Name", etc.
-    Optionally adds a (crippled) business suffix to the company.
-    """
-    if not names or not companies:
-        return "", ""
-
-    name_text = random.choice(names)
-    company_text = random.choice(companies)
-
-    name_words, name_tags = tag_entity(name_text, "PER")
-    company_words, company_tags = tag_entity(company_text, "ORG")
-
-    # Optionally add and cripple a suffix
-    if random.random() < 0.5:
-        suffix = random.choice(COMPANY_SUFFIXES)
-        crippled_suffix = cripple_text(suffix)
-        company_words.extend(crippled_suffix.split())
-        # The whole suffix is part of the organization
-        company_tags.extend([I_ORG] * len(crippled_suffix.split()))
-
-    pattern = random.choice([
-        "name_sep_company", "company_sep_name"
-    ])
-    separator = random.choice(["-", ",", " | "])
-
-    if pattern == "name_sep_company":
-        all_words = name_words + separator.split() + company_words
-        all_tags = name_tags + [O] * len(separator.split()) + company_tags
-    else: # company_sep_name
-        all_words = company_words + separator.split() + name_words
-        all_tags = company_tags + [O] * len(separator.split()) + name_tags
-
-    return " ".join(all_words), " ".join(all_tags)
-
-def remix_company_with_multiple_names(names: List[str], companies: List[str]) -> Tuple[str, str]:
-    """Generates patterns like 'Company - Name1 and Name2'"""
-    if len(names) < 2 or not companies:
-        return "", ""
-    
-    company_text = random.choice(companies)
-    name1_text, name2_text = random.sample(names, 2)
-
-    company_words, company_tags = tag_entity(company_text, "ORG")
-    name1_words, name1_tags = tag_entity(name1_text, "PER")
-    name2_words, name2_tags = tag_entity(name2_text, "PER")
-
-    separator1 = random.choice(["-", ":"])
-    separator2 = random.choice(["a", "&", "and", "+"])
-
-    all_words = company_words + [separator1] + name1_words + [separator2] + name2_words
-    all_tags = company_tags + [O] + name1_tags + [O] + name2_tags
-
-    return " ".join(all_words), " ".join(all_tags)
-
-
-def remix_company_with_suffix(names: List[str], companies: List[str], nicknames: List[str]) -> Tuple[str, str]:
-    """Adds a business suffix like 's.r.o.' to a company or a person's name."""
-    if not companies and not names:
-        return "", ""
-    
-    # Decide whether to use a company name or a person's name as the base
-    use_company = random.random() > 0.3
-    
-    if use_company and companies:
-        base_text = random.choice(companies)
-        base_words, base_tags = tag_entity(base_text, "ORG")
-    elif names:
-        base_text = random.choice(names)
-        base_words, base_tags = tag_entity(base_text, "ORG") # Tag as ORG in this context
-    else: # Fallback
-        return "", ""
-
-    suffix = random.choice(COMPANY_SUFFIXES)
-    crippled_suffix = cripple_text(suffix)
-    
-    final_words = base_words + crippled_suffix.split()
-    final_tags = base_tags + [I_ORG] * len(crippled_suffix.split())
-
-    return " ".join(final_words), " ".join(final_tags)
-
-def remix_email(names: List[str]) -> Tuple[str, str]:
-    """Generates a fake email from a name and tags it as a nickname."""
-    if not names:
-        return "", ""
-    
-    all_email_domains = [
-        # --- Czech Providers (Major) ---
-        "seznam.cz",       # Most popular in Czech Republic
-        "email.cz",        # Alias for Seznam.cz
-        "post.cz",         # Alias for Centrum.cz
-        "centrum.cz",      # Second most popular
-        "atlas.cz",        # Merged with Centrum.cz
-        
-        # --- Czech Providers (ISP / Legacy) ---
-        "volny.cz",        # A major legacy provider, originally from an ISP
-        "tiscali.cz",      # Another popular legacy ISP provider
-        "iol.cz",          # Legacy O2 (Internet OnLine)
-        "o2.cz",           # O2 Czech Republic
-        "upcmail.cz",      # Former UPC customers (now Vodafone)
-        "t-email.cz",      # T-Mobile email service
-        
-        # --- Slovak Providers (Major) ---
-        "zoznam.sk",       # Slovak equivalent of Seznam
-        "azet.sk",         # Very popular Slovak portal and email service
-        "centrum.sk",      # Slovak version of Centrum
-        "pobox.sk",        # Common Slovak email provider
-        "atlas.sk",        # Slovak version of Atlas
-        "post.sk",         # A Slovak mail service
-        "szm.sk",          # Another domain from Zoznam.sk
-        
-        # --- Slovak Providers (ISP / Legacy) ---
-        "orangemail.sk",   # Orange Slovensko
-        "t-com.sk",        # Slovak Telekom
-        "stonline.sk",     # Legacy Slovak Telekom
-        "nextra.sk",       # Legacy ISP
-        
-        # --- International Providers (Major Global) ---
-        "gmail.com",       # Google
-        "googlemail.com",  # Google's alternative domain, common in UK/Germany
-        "outlook.com",     # Microsoft
-        "hotmail.com",     # Microsoft (Legacy)
-        "live.com",        # Microsoft (Legacy)
-        "msn.com",         # Microsoft (Legacy)
-        "yahoo.com",       # Yahoo
-        "yahoo.co.uk",     # Yahoo UK
-        "ymail.com",       # Yahoo alternative domain
-        "rocketmail.com",  # Yahoo alternative domain (Legacy)
-        "icloud.com",      # Apple
-        "me.com",          # Apple (Legacy)
-        "mac.com",         # Apple (Legacy)
-        "aol.com",         # AOL (still very common in the US)
-        "zoho.com",        # Popular business & personal email
-        "mail.com",        # A popular generic email service
-        "gmx.com",         # Popular in Europe, especially Germany
-        "gmx.net",         # Alternative GMX domain
-        "yandex.com",      # Yandex (popular in Eastern Europe)
-        "yandex.ru",       # Yandex (Russian domain)
-        
-        # --- International Providers (Privacy-Focused) ---
-        "proton.me",       # Proton Mail's current primary domain
-        "protonmail.com",  # Proton Mail (Legacy)
-        "pm.me",           # Proton Mail's short domain
-        "tutanota.com",    # Tutanota (encrypted email)
-        "tuta.com",        # Tutanota's new primary domain
-        "keemail.me",      # Tutanota's alternative domain
-        "fastmail.com",    # Very popular, reliable paid email service
-        "mailbox.org",     # German privacy-focused provider
-        "posteo.de",       # German privacy-focused provider (paid)
-        "skiff.com",       # End-to-end encrypted email service
-        
-        # --- International Providers (Regional / Country-Specific) ---
-        "web.de",          # Germany (very popular)
-        "gmx.de",          # Germany (very popular)
-        "t-online.de",     # Germany (Deutsche Telekom)
-        "freenet.de",      # Germany
-        "laposte.net",     # France (national post service)
-        "orange.fr",       # France (Orange ISP)
-        "sfr.fr",          # France (SFR ISP)
-        "free.fr",         # France (Free ISP)
-        "wp.pl",           # Poland (Wirtualna Polska)
-        "o2.pl",           # Poland
-        "onet.pl",         # Poland
-        "interia.pl",      # Poland
-        "mail.ru",         # Russia (VK Group)
-        "rambler.ru",      # Russia
-        "libero.it",       # Italy
-        "virgilio.it",     # Italy
-        "terra.com.br",    # Brazil
-        "uol.com.br",      # Brazil
-        "bol.com.br",      # Brazil
-        "rediffmail.com",  # India
-        "qq.com",          # China (Tencent)
-        "163.com",         # China (NetEase)
-        "126.com",         # China (NetEase)
-        "sina.com",        # China
-        "naver.com",       # South Korea
-        "hanmail.net",     # South Korea (now Daum)
-        "daum.net",        # South Korea
-        "btinternet.com",  # UK (British Telecom)
-        "talktalk.net",    # UK
-        "sky.com",         # UK
-        "comcast.net",     # USA (Comcast/Xfinity ISP)
-        "verizon.net",     # USA (Verizon ISP)
-        "att.net",         # USA (AT&T ISP)
-        "sbcglobal.net",   # USA (Legacy AT&T)
-    ]
-
-    name_text = random.choice(names).lower().replace(" ", ".")
-    domain = random.choice(all_email_domains)
-    email = f"{name_text}@{domain}"
-    
-    # The whole email is a single token for our purposes, tagged as a nickname
-    return email, B_NICK
-
-def remix_name_and_location(names: List[str], cities: List[str]) -> Tuple[str, str]:
-    """Creates a sample like 'Jan Novák, Praha' in various permutations."""
-    if not names or not cities:
-        return "", ""
-    
-    name_text = random.choice(names)
-    location_text = random.choice(cities)
-
-    name_words, name_tags = tag_entity(name_text, "PER")
-    location_words, location_tags = tag_entity(location_text, "LOC")
-    
-    pattern = random.choice([
-        "name_sep_city", "city_sep_name", "name_city", "name_prep_city"
-    ])
-    
-    final_words, final_tags = [], []
-
-    if pattern == "name_sep_city":
-        separator = random.choice([",", " - "])
-        final_words = name_words + separator.split() + location_words
-        final_tags = name_tags + [O] * len(separator.split()) + location_tags
-    elif pattern == "city_sep_name":
-        separator = random.choice([",", " - "])
-        final_words = location_words + separator.split() + name_words
-        final_tags = location_tags + [O] * len(separator.split()) + name_tags
-    elif pattern == "name_city":
-        final_words = name_words + location_words
-        final_tags = name_tags + location_tags
-    elif pattern == "name_prep_city":
-        # Handle Czech prepositions "v" and "ve"
-        preposition = "v"
-        # Use "ve" for words starting with v, f, or specific consonant clusters
-        if location_words[0].lower().startswith(('v', 'f', 's', 'z', 'p', 'b', 'm')):
-             if len(location_words[0]) > 1 and location_words[0][1].lower() in "sztk":
-                 preposition = "ve"
-        
-        final_words = name_words + [preposition] + location_words
-        final_tags = name_tags + [O] + location_tags
-
-    return " ".join(final_words), " ".join(final_tags)
-
-def remix_single_city(cities: List[str]) -> Tuple[str, str]:
-    """Creates a sample with a single city name."""
-    if not cities:
-        return "", ""
-    city_text = random.choice(cities)
-    _, city_tags = tag_entity(city_text, "LOC")
-    return city_text, " ".join(city_tags)
-
-
-def remix_gibberish() -> Tuple[str, str]:
-    """Generates a random string of characters."""
-    length = random.randint(5, 15)
-    chars = "abcdefghijklmnopqrstuvwxyz0123456789_-"
-    text = "".join(random.choice(chars) for _ in range(length))
-    return text, B_NICK
-
-
-def remix_two_names(names: List[str]) -> Tuple[str, str]:
-    """Creates a sample with two names, e.g., 'John Doe and Jane Smith'."""
-    if len(names) < 2:
-        return "", ""
-    
-    name1_text, name2_text = random.sample(names, 2)
-    name1_words, name1_tags = tag_entity(name1_text, "PER")
-    name2_words, name2_tags = tag_entity(name2_text, "PER")
-    
-    separator = random.choice(["a", "and", "&", ","])
-    
-    all_words = name1_words + [separator] + name2_words
-    all_tags = name1_tags + [O] + name2_tags
-    
-    return " ".join(all_words), " ".join(all_tags)
-
-def remix_name_and_company(names: List[str], companies: List[str]) -> Tuple[str, str]:
-    """Creates samples like 'John Doe, Acme Inc.' or 'John Doe @ Acme Inc.'"""
-    if not names or not companies:
-        return "", ""
-        
-    name_text = random.choice(names)
-    company_text = random.choice(companies)
-    
-    name_words, name_tags = tag_entity(name_text, "PER")
-    company_words, company_tags = tag_entity(company_text, "ORG")
-    
-    # Pattern 1: Name, Company
-    if random.random() > 0.5:
-        separator = random.choice([",", "from", "at", "@"])
-        all_words = name_words + [separator] + company_words
-        all_tags = name_tags + [O] + company_tags
-    # Pattern 2: Company (Name)
-    else:
-        all_words = company_words + ["("] + name_words + [")"]
-        all_tags = company_tags + [O] + name_tags + [O]
-
-    return " ".join(all_words), " ".join(all_tags)
+        parts = line.split()
+        kept_parts = []
+        for p in parts:
+            pn = _normalize_dotless_token(p)
+            if pn in title_norm:
+                stripped += 1
+                continue
+            kept_parts.append(p)
+        s = ' '.join(kept_parts).strip()
+        if s:
+            cleaned.append(s)
+            
+    if stripped > 0:
+        print(f"Stripped {stripped:,} title tokens from {initial_count:,} names.")
+    return cleaned, initial_count, removed_by_validator
 
 
 def main():
@@ -757,11 +151,35 @@ def main():
 
     random.seed(args.seed)
 
-    print("Loading source entity files...")
-    names = load_entities(args.names_file)
-    companies = load_entities(args.companies_file)
-    nicknames = load_entities(args.nicknames_file)
-    cities = load_entities(args.cities_file)
+    print("Loading and filtering source entity files...")
+    
+    names, names_initial, names_removed = load_names_strip_titles(args.names_file, has_only_allowed_chars)
+    companies, companies_initial, companies_removed = load_entities(args.companies_file, has_only_allowed_chars)
+    nicknames, nicknames_initial, nicknames_removed = load_entities(args.nicknames_file, has_only_allowed_chars)
+    cities, cities_initial, cities_removed = load_entities(args.cities_file, has_only_allowed_chars)
+
+    # --- Report on filtering ---
+    print("Filtered out entries with unsupported characters:")
+    if names_removed > 0:
+        print(f"  - names: {names_initial:,} -> {names_initial - names_removed:,} (removed {names_removed:,})")
+    if companies_removed > 0:
+        print(f"  - companies: {companies_initial:,} -> {companies_initial - companies_removed:,} (removed {companies_removed:,})")
+    if nicknames_removed > 0:
+        print(f"  - nicknames: {nicknames_initial:,} -> {nicknames_initial - nicknames_removed:,} (removed {nicknames_removed:,})")
+    if cities_removed > 0:
+        print(f"  - cities: {cities_initial:,} -> {cities_initial - cities_removed:,} (removed {cities_removed:,})")
+
+    words_corpus = load_words_corpus()
+    org_types = load_org_types()
+
+    # Precompute a smaller subset of words for O-phrase generation to avoid slow random.choice on large lists
+    if words_corpus:
+        o_phrase_words = random.sample(words_corpus, min(10000, len(words_corpus)))
+    else:
+        o_phrase_words = []
+
+    # Precompute single-word names for remix_single_per strategy
+    single_names = [n for n in names if len(n.split()) == 1]
 
     # --- Noise Injection: Probabilistically strip suffixes from companies ---
     if companies:
@@ -801,32 +219,63 @@ def main():
     if names:
         print("Injecting noise: Introducing typos/diacritic removal into names...")
         crippled_count = 0
-        crippled_names = []
+        crippled_names_augmented = []
         for name in names:
-            if random.random() < 0.3: # 30% chance to cripple a name
+            # Always keep the original
+            crippled_names_augmented.append(name)
+            # With a 30% probability, also add a crippled version
+            if random.random() < 0.3:
                 crippled_name = cripple_entity(name)
                 if crippled_name != name:
+                    crippled_names_augmented.append(crippled_name)
                     crippled_count += 1
-                crippled_names.append(crippled_name)
-            else:
-                crippled_names.append(name)
-        names = crippled_names
-        print(f"Applied noise to {crippled_count:,} names.")
+        names = crippled_names_augmented
+        print(f"Added {crippled_count:,} crippled name variants to the data pool.")
+
+    # --- Noise Injection: i/y swapping ---
+    if names:
+        iy_swap_count = 0
+        iy_augmented_names = []
+        for name in names:
+            iy_augmented_names.append(name)
+            if random.random() < 0.20:
+                iy_swapped_name = cripple_iy(name)
+                if iy_swapped_name != name:
+                    iy_augmented_names.append(iy_swapped_name)
+                    iy_swap_count += 1
+        names = iy_augmented_names
+        if iy_swap_count > 0:
+            print(f"Added {iy_swap_count:,} i/y swapped name variants to the data pool.")
 
     if companies:
         print("Injecting noise: Introducing typos/diacritic removal into companies...")
         crippled_count = 0
-        crippled_companies = []
+        crippled_companies_augmented = []
         for company in companies:
-            if random.random() < 0.3: # 30% chance to cripple a company
+            # Always keep the original
+            crippled_companies_augmented.append(company)
+            # With a 30% probability, also add a crippled version
+            if random.random() < 0.3:
                 crippled_company = cripple_entity(company)
                 if crippled_company != company:
+                    crippled_companies_augmented.append(crippled_company)
                     crippled_count += 1
-                crippled_companies.append(crippled_company)
-            else:
-                crippled_companies.append(company)
-        companies = crippled_companies
-        print(f"Applied noise to {crippled_count:,} company names.")
+        companies = crippled_companies_augmented
+        print(f"Added {crippled_count:,} crippled company variants to the data pool.")
+
+    if companies:
+        iy_swap_count = 0
+        iy_augmented_companies = []
+        for company in companies:
+            iy_augmented_companies.append(company)
+            if random.random() < 0.20:
+                iy_swapped_company = cripple_iy(company)
+                if iy_swapped_company != company:
+                    iy_augmented_companies.append(iy_swapped_company)
+                    iy_swap_count += 1
+        companies = iy_augmented_companies
+        if iy_swap_count > 0:
+            print(f"Added {iy_swap_count:,} i/y swapped company variants to the data pool.")
 
     # --- Prefix Stripping: Remove common prefixes like 't.j.' ---
     if names:
@@ -860,73 +309,19 @@ def main():
             print(f"Stripped 't.j.' prefix from {stripped_count:,} company names.")
 
 
-    remix_strategies = [
-        # Foundational strategies
-        {"func": remix_single_entity, "weight": 0.30},
-        {"func": remix_two_names, "weight": 0.08},
-        {"func": remix_name_and_company, "weight": 0.10}, # Kept for its unique patterns
-        
-        # Czech-specific and common variations
-        {"func": remix_name_with_title, "weight": 0.08},
-        {"func": remix_name_with_nickname, "weight": 0.05},
-        {"func": remix_company_with_suffix, "weight": 0.08}, # Kept for person -> org pattern
-        {"func": remix_email, "weight": 0.05},
-        {"func": remix_name_and_location, "weight": 0.05},
-        {"func": remix_gibberish, "weight": 0.03},
-
-        # NEW complex patterns requested by user
-        {"func": remix_name_company_patterns, "weight": 0.15},
-        {"func": remix_company_with_multiple_names, "weight": 0.05},
-        {"func": remix_single_city, "weight": 0.03},
-    ]
-    
-    # --- Dynamic Strategy Filtering and Argument Handling ---
-
-    # Define required data for each strategy
-    strategy_reqs = {
-        remix_single_entity: ["names", "companies", "nicknames"],
-        remix_two_names: ["names"],
-        remix_name_and_company: ["names", "companies"],
-        remix_name_with_title: ["names"],
-        remix_name_with_nickname: ["names", "nicknames"],
-        remix_company_with_suffix: ["names", "companies", "nicknames"],
-        remix_email: ["names"],
-        remix_name_and_location: ["names", "cities"],
-        remix_gibberish: [],
-        remix_name_company_patterns: ["names", "companies"],
-        remix_company_with_multiple_names: ["names", "companies"],
-        remix_single_city: ["cities"],
+    # Prepare available data for strategy filtering
+    available_data = {
+        "names": names,
+        "companies": companies,
+        "nicknames": nicknames,
+        "cities": cities,
+        "single_names": single_names,
+        "o_phrase_words": o_phrase_words,
+        "org_types": org_types
     }
-    
-    available_data = { "names": names, "companies": companies, "nicknames": nicknames, "cities": cities }
 
-    # Filter out strategies that cannot be run with the available data
-    initial_strategies = remix_strategies
-    remix_strategies = []
-    for s in initial_strategies:
-        func = s["func"]
-        
-        # Handle special conditions first
-        if func == remix_two_names and len(names) < 2: continue
-        if func == remix_company_with_multiple_names and (len(names) < 2 or not companies): continue
-        if func == remix_name_with_nickname and (not names or not nicknames): continue
-        if func == remix_name_and_location and (not names or not cities): continue
-        if func == remix_single_city and not cities: continue
-
-        # General check for required data files
-        can_run = all(available_data.get(req) for req in strategy_reqs.get(func, []))
-        if can_run:
-            remix_strategies.append(s)
-
-    # Re-normalize weights so they sum to 1 after filtering
-    total_weight = sum(s["weight"] for s in remix_strategies)
-    if total_weight > 0:
-        for s in remix_strategies:
-            s["weight"] /= total_weight
-    
-    population = [s["func"] for s in remix_strategies]
-    weights = [s["weight"] for s in remix_strategies]
-    
+    # Get active strategies based on available data
+    population, weights = get_active_strategies(available_data)
     if not population:
         print("Error: No remix strategies can be run with the available data. Check source files.")
         return
@@ -945,21 +340,36 @@ def main():
         strategy = random.choices(population, weights=weights, k=1)[0]
         
         # Build arguments for the chosen strategy dynamically
-        required_args = strategy_reqs.get(strategy, [])
+        required_args = STRATEGY_REQUIREMENTS.get(strategy, [])
         func_args = {arg: available_data[arg] for arg in required_args}
         
-        text, tags = strategy(**func_args)
+        try:
+            text, tags = strategy(**func_args)
+        except Exception as e:
+            # Log strategy crashes but don't stop the whole process
+            error_message = str(e)
+            if len(error_message) > 500:
+                error_message = error_message[:500] + "..."
+            print(f"Strategy '{strategy.__name__}' crashed with an error: {error_message}")
+            text, tags = "", "" # Continue with empty sample
         
         if text and tags:
-            # Clean and filter to allowed charset; preserve alignment
-            text, tags = clean_text_and_tags_for_tokenizer(text, tags)
+            # Lowercase the entire text for consistent training
+            text = text.lower()
+            
             # Validate: token count == tag count, all tags in allowed set
-            if text and tags:
-                tw = text.split()
-                tg = tags.split()
-                allowed_tags = {O, B_PER, I_PER, B_ORG, I_ORG, B_NICK, I_NICK, "B-LOC", "I-LOC", B_TIT, I_TIT}
-                if len(tw) == len(tg) and all(t in allowed_tags for t in tg):
-                    buffer.append({"text": text, "tags": tags})
+            tw = text.split()
+            tg = tags.split()
+            allowed_tags = {O, B_PER, I_PER, B_ORG, I_ORG, B_NICK, I_NICK, "B-LOC", "I-LOC", B_TIT, I_TIT}
+            if len(tw) == len(tg) and all(t in allowed_tags for t in tg):
+                buffer.append({"text": text, "tags": tags})
+            else:
+                # Log validation failures to console for debugging, truncating long strings
+                text_to_log = text if len(text) <= 500 else text[:500] + "..."
+                tags_to_log = tags if len(tags) <= 500 else tags[:500] + "..."
+                print(f"Validation failed for strategy '{strategy.__name__}':")
+                print(f"  Text ({len(tw)} tokens): '{text_to_log}'")
+                print(f"  Tags ({len(tg)} tokens): '{tags_to_log}'")
             
         # Write chunk to disk when buffer is full or at the very end
         if len(buffer) >= args.chunk_size or (i == args.num_samples and buffer):
