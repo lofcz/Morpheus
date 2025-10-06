@@ -8,13 +8,18 @@ from .utils import tag_entity
 
 def remix_hyphenated_name(names: List[str]) -> Tuple[str, str]:
     """Create hyphenated given-given or surname-surname strings."""
-    if len(names) < 2:
+    if not names:
         return "", ""
-    left = random.choice(names).split()
-    right = random.choice(names).split()
-    if not left or not right:
-        return "", ""
-    # take first token of each
-    text = f"{left[0]}-{right[0]}"
-    words, tags = tag_entity(text, "PER")
-    return " ".join(words), " ".join(tags)
+
+    # Try a few times to find a multi-word name to avoid filtering the whole list
+    for _ in range(10):
+        name = random.choice(names)
+        parts = name.split()
+        if len(parts) >= 2:
+            # Create a hyphenated name from the first two parts
+            text = f"{parts[0]}-{parts[1]}"
+            words, tags = tag_entity(text, "PER")
+            return " ".join(words), " ".join(tags)
+    
+    # Fallback if no multi-word name was found after 10 tries
+    return "", ""

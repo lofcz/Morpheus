@@ -11,13 +11,15 @@ from tokenizers.normalizers import Sequence as NormSequence, NFKC, Lowercase
 Train a BPE tokenizer from the synthesized dataset.csv.
 """
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 # --- Configuration ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# This script now exclusively uses the synthesized dataset from remix.py
 DATA_FILE = os.path.join(SCRIPT_DIR, "data", "dataset.csv")
+WORDS_FILE = os.path.join(SCRIPT_DIR, "data", "classes", "sources", "words", "cs_raw.txt") # NEW
 CORPUS_FILE = os.path.join(SCRIPT_DIR, "data", "corpus.txt")
 TOKENIZER_SAVE_PATH = os.path.join(SCRIPT_DIR, "custom-bpe-tokenizer.json")
-VOCAB_SIZE = 8000  # Larger vocab to learn meaningful word/subword units
+VOCAB_SIZE = 16000 # Increased vocab size for a more diverse corpus
 
 
 def normalize_text(text: str) -> str:
@@ -39,19 +41,38 @@ def train_tokenizer():
         print("Please run 'run_remix.bat' first to synthesize the dataset.")
         return
 
-    # 1. Generate a corpus file from the dataset
-    print(f"Reading data from {DATA_FILE} to generate corpus...")
+    # 1. Generate a corpus file from the dataset and the raw words file
+    print(f"Reading data from {DATA_FILE} and {WORDS_FILE} to generate corpus...")
     df = pd.read_csv(DATA_FILE)
+    
     with open(CORPUS_FILE, "w", encoding="utf-8") as f:
+        # First, write the synthesized dataset
         for text in df["text"]:
             s = normalize_text(str(text))
             if not s:
                 continue
-            f.write(s + "\n")
+            f.write(s + "\\n")
+
+        # Second, write the raw words corpus
+        if os.path.exists(WORDS_FILE):
+            with open(WORDS_FILE, "r", encoding="utf-8") as words_f:
+                # The raw file is a single line of comma-separated words
+                line = words_f.readline()
+                words = line.split(',')
+                for word in words:
+                    s = normalize_text(word)
+                    if s:
+                        f.write(s + "\\n")
+        else:
+            print(f"Warning: Words file not found at {WORDS_FILE}")
+
     print(f"Corpus saved to {CORPUS_FILE}")
 
     # 2. Initialize a tokenizer
-    tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
+    tokenizer = Tokenizer(BPE(
+        unk_token="[UNK]",
+        cache_capacity=0
+    ))
     tokenizer.normalizer = NormSequence([NFKC()])
     # Split on whitespace and punctuation like BERT, improves word boundaries
     tokenizer.pre_tokenizer = BertPreTokenizer()

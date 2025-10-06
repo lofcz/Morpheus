@@ -1,30 +1,17 @@
-# Example mixture configuration
-# Format: label,relative_path[,fraction]
-# You can use singular or plural for labels. 'handle' maps to 'nickname'.
-# Fraction is optional (defaults to 1.0) and is applied as probabilistic sampling per line.
+# This file defines the data sources for each entity type.
+# Format: entity_type, relative_path, sampling_fraction (optional)
 
-# Companies
-company,sources/companies/companies_cz.txt
-company,sources/companies/companies_7m.txt
-company,sources/companies/companies_all.txt
-company,sources/companies/companies_de2k.txt
-company,sources/companies/companies_sec_edgar.txt
+# --- Names ---
+name,sources/names/names_cz.txt,1.0
+name,sources/names/names_en.txt,1.0
+name,sources/names/names_sk.txt,1.0
 
-# Names
-name,sources/names/names_cz.txt
-name,sources/names/names.txt
-name,sources/names/names2.txt
-name,sources/names/names_ru.txt,0.1
-name,sources/names/names_pl.txt,0.5
-# disabled for now - start with simpler set
-#name,sources/names/names_sv.txt
-#name,sources/names/names_hu.txt
-#name,sources/names/names_de.txt,0.25
+# --- Companies ---
+company,sources/companies/companies_cz.txt,1.0
+company,sources/companies/benchmark_additions.txt,1.0
 
-# Nicknames
-nickname,sources/nicknames/epicube-players.txt
-nickname,sources/nicknames/hypixel-players.txt
-nickname,sources/nicknames/minecraft-players.txt
+# --- Nicknames ---
+nickname,sources/nicknames/nicknames_cz.txt,1.0
 
-# Cities
-city,sources/cities/cities_cz.txt
+# --- Cities ---
+city,sources/cities/cities_cz.txt,1.0

@@ -30,28 +30,18 @@ def remix_name_company_patterns(names: List[str], companies: List[str]) -> Tuple
         suffix = random.choice(COMPANY_SUFFIXES)
         crippled_suffix = cripple_text(suffix)
         company_words.extend(crippled_suffix.split())
-        # The whole suffix is part of the organization
         company_tags.extend([I_ORG] * len(crippled_suffix.split()))
 
     pattern = random.choice([
         "name_sep_company", "company_sep_name"
     ])
-    # More variety in separators - avoid repetitive comma-space
-    separator = random.choice(["-", "|", ":", "/", "&"])
+    separator = random.choice(["-", "|", ":", "/", "&", ","])
 
     if pattern == "name_sep_company":
-        if separator in ["-", "|", ":", "/", "&"] and random.random() < 0.4:
-            all_words = name_words[:-1] + [name_words[-1] + separator + company_words[0]] + company_words[1:]
-            all_tags = name_tags + company_tags[1:]
-        else:
-            all_words = name_words + [separator] + company_words
-            all_tags = name_tags + [O] + company_tags
+        all_words = name_words + [separator] + company_words
+        all_tags = name_tags + [O] + company_tags
     else:  # company_sep_name
-        if separator in ["-", "|", ":", "/", "&"] and random.random() < 0.4:
-            all_words = company_words[:-1] + [company_words[-1] + separator + name_words[0]] + name_words[1:]
-            all_tags = company_tags + name_tags[1:]
-        else:
-            all_words = company_words + [separator] + name_words
-            all_tags = company_tags + [O] + name_tags
+        all_words = company_words + [separator] + name_words
+        all_tags = company_tags + [O] + name_tags
 
     return " ".join(all_words), " ".join(all_tags)

@@ -13,32 +13,22 @@ def remix_two_names(names: List[str]) -> Tuple[str, str]:
     
     name1_text, name2_text = random.sample(names, 2)
     
-    # Sometimes shuffle name order (surname first)
-    def maybe_shuffle_name(name: str) -> str:
-        if random.random() < 0.3 and len(name.split()) >= 2:
-            parts = name.split()
-            # Reverse: surname first
-            return " ".join(reversed(parts))
-        return name
+    name1_words = name1_text.split()
+    name2_words = name2_text.split()
     
-    name1_text = maybe_shuffle_name(name1_text)
-    name2_text = maybe_shuffle_name(name2_text)
-    
+    # 30% chance to create a single hyphenated token from the first word of each name
+    if random.random() < 0.3 and name1_words and name2_words:
+        text = f"{name1_words[0]}-{name2_words[0]}"
+        words, tags = tag_entity(text, "PER")
+        return " ".join(words), " ".join(tags)
+
+    # Default case: two names separated by a spaced separator
     name1_words, name1_tags = tag_entity(name1_text, "PER")
     name2_words, name2_tags = tag_entity(name2_text, "PER")
     
-    # More variety in separators, avoid repetitive ", " pattern
-    separator = random.choice(["a", "and", "&", "+", "/", "|", "-", ","])
+    separator = random.choice(["a", "and", "&", "+", ",", "i"])
     
-    # Sometimes concatenate separator without spaces (only for clear separators)
-    if separator in ["/", "|", "-", "&"] and random.random() < 0.5:
-        # No spaces around separator - merge with adjacent words
-        # Only for visual separators that clearly delimit boundaries
-        all_words = name1_words[:-1] + [name1_words[-1] + separator + name2_words[0]] + name2_words[1:]
-        all_tags = name1_tags + name2_tags[1:]
-    else:
-        # Normal spacing with separator
-        all_words = name1_words + [separator] + name2_words
-        all_tags = name1_tags + [O] + name2_tags
+    all_words = name1_words + [separator] + name2_words
+    all_tags = name1_tags + [O] + name2_tags
     
     return " ".join(all_words), " ".join(all_tags)

@@ -78,43 +78,58 @@ public class Program
 
     private static void Predict(InferenceSession session, Tokenizer tokenizer, string text, long padTokenId)
     {
-        var encoding = tokenizer.Encode(text);
-        var ids = encoding.Ids.Select(i => (long)i).ToList();
-        var wordIds = encoding.WordIds?.ToList() ?? Enumerable.Repeat<long?>(null, encoding.Ids.Count).ToList();
-        var tokens = encoding.Tokens.ToList();
+        // Encode returns uint[] - just the token IDs
+        var tokenIds = tokenizer.Encode(text);
+        var ids = tokenIds.Select(i => (long)i).ToList();
+        
+        // Store original length before padding
+        int originalLength = ids.Count;
 
-        // Pad/truncate
+        // Pad/truncate token IDs
         if (ids.Count > MaxLength)
         {
             ids = ids.Take(MaxLength).ToList();
-            wordIds = wordIds.Take(MaxLength).ToList();
-            tokens = tokens.Take(MaxLength).ToList();
+            originalLength = MaxLength;
         }
         else if (ids.Count < MaxLength)
         {
             var padCount = MaxLength - ids.Count;
             ids.AddRange(Enumerable.Repeat(padTokenId, padCount));
-            wordIds.AddRange(Enumerable.Repeat<long?>(null, padCount));
-            tokens.AddRange(Enumerable.Repeat("[PAD]", padCount));
         }
 
         var inputTensor = new DenseTensor<long>(ids.ToArray(), new[] { 1, MaxLength });
+        
         // Prepare byte_ids [1, L, CharMaxLen]
-        var byteMatrix = new long[1, MaxLength, CharMaxLen];
-        for (int i = 0; i < MaxLength; i++)
+        // Since we don't have individual tokens, we'll reconstruct text from original input
+        // Split text into words for byte encoding
+        var words = text.Split(new[] { ' ', ',', '.', ';', ':', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
+        var byteData = new long[1 * MaxLength * CharMaxLen];
+        
+        // Approximate: encode each token position with text bytes
+        // This is a simplified approach since we don't have exact token strings
+        var textBytes = Encoding.UTF8.GetBytes(text);
+        int tokenIndex = 0;
+        int charPos = 0;
+        
+        // Distribute text bytes across tokens proportionally
+        int bytesPerToken = Math.Max(1, textBytes.Length / Math.Max(1, originalLength));
+        for (int i = 0; i < originalLength && i < MaxLength; i++)
         {
-            string piece = tokens[i];
-            if (piece.StartsWith("##")) piece = piece.Substring(2);
-            var bytes = Encoding.UTF8.GetBytes(piece);
-            int len = Math.Min(bytes.Length, CharMaxLen);
-            for (int j = 0; j < len; j++) byteMatrix[0, i, j] = bytes[j];
-            for (int j = len; j < CharMaxLen; j++) byteMatrix[0, i, j] = 0;
+            int endPos = Math.Min(charPos + bytesPerToken, textBytes.Length);
+            int len = Math.Min(endPos - charPos, CharMaxLen);
+            
+            for (int j = 0; j < len && charPos < textBytes.Length; j++)
+            {
+                byteData[i * CharMaxLen + j] = textBytes[charPos++];
+            }
         }
+        
+        var byteTensor = new DenseTensor<long>(byteData, new[] { 1, MaxLength, CharMaxLen });
 
         var inputs = new List<NamedOnnxValue>
         {
             NamedOnnxValue.CreateFromTensor("input_ids", inputTensor),
-            NamedOnnxValue.CreateFromTensor("byte_ids", new DenseTensor<long>(byteMatrix, new[] { 1, MaxLength, CharMaxLen }))
+            NamedOnnxValue.CreateFromTensor("byte_ids", byteTensor)
         };
 
         using var results = session.Run(inputs);
@@ -131,7 +146,7 @@ public class Program
         {
             int arg = 0;
             float best = float.NegativeInfinity;
-            int baseIdx = i * C; // row-major within last dim
+            int baseIdx = i * C;
             for (int j = 0; j < C; j++)
             {
                 float v = flat[baseIdx + j];
@@ -139,31 +154,70 @@ public class Program
             }
             predIdx[i] = arg;
         }
-        var predTags = predIdx.Select(i => i >= 0 && i < IdToTag.Length ? IdToTag[i] : "O").ToArray();
+        
+        // Get predicted tags (only for non-padded positions)
+        var predTags = predIdx.Take(originalLength)
+            .Select(i => i >= 0 && i < IdToTag.Length ? IdToTag[i] : "O")
+            .ToArray();
         predTags = EnforceIob(predTags);
 
-        // Word-level mapping: take first subtoken tag for each word
-        var words = new List<string>();
-        var wordTags = new List<string>();
-        long? prevWid = null;
-        string currentWord = "";
-        for (int i = 0; i < L; i++)
+        // Extract entities from consecutive B/I tags
+        var entities = new List<(string, string)>();
+        var currentEntity = new List<string>();
+        string currentType = null;
+        
+        // Since we don't have word boundaries, we'll work with the original words
+        var wordList = text.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+        int wordsPerToken = Math.Max(1, wordList.Count / Math.Max(1, originalLength));
+        
+        for (int i = 0; i < predTags.Length; i++)
         {
-            var wid = wordIds[i];
-            if (wid == null) continue;
-            if (prevWid == null || wid != prevWid)
+            var tag = predTags[i];
+            
+            if (tag == "O")
             {
-                words.Add(NormalizePieces(tokens, i));
-                wordTags.Add(predTags[i]);
-                prevWid = wid;
+                if (currentEntity.Count > 0)
+                {
+                    entities.Add((string.Join(" ", currentEntity), currentType ?? ""));
+                    currentEntity.Clear();
+                    currentType = null;
+                }
+            }
+            else if (tag.Contains("-"))
+            {
+                var parts = tag.Split('-');
+                var bio = parts[0];
+                var ent = parts[1];
+                
+                if (bio == "B" || currentType != ent)
+                {
+                    if (currentEntity.Count > 0)
+                    {
+                        entities.Add((string.Join(" ", currentEntity), currentType ?? ""));
+                    }
+                    currentEntity.Clear();
+                    currentType = ent;
+                }
+                
+                // Add approximate words for this token
+                int wordStart = i * wordsPerToken;
+                int wordEnd = Math.Min(wordStart + wordsPerToken, wordList.Count);
+                for (int w = wordStart; w < wordEnd; w++)
+                {
+                    currentEntity.Add(wordList[w]);
+                }
             }
         }
-
-        var entities = ExtractEntities(words, wordTags);
+        
+        if (currentEntity.Count > 0)
+        {
+            entities.Add((string.Join(" ", currentEntity), currentType ?? ""));
+        }
 
         Console.WriteLine($"\nInput: \"{text}\"");
-        Console.WriteLine("Words:   " + string.Join(" | ", words));
-        Console.WriteLine("Tags:    " + string.Join(" | ", wordTags));
+        Console.WriteLine($"Tokens: {originalLength} token(s)");
+        Console.WriteLine($"Tags: {string.Join(" ", predTags)}");
+        
         if (entities.Count > 0)
         {
             Console.ForegroundColor = ConsoleColor.Green;
@@ -217,50 +271,4 @@ public class Program
         return fixedTags;
     }
 
-    private static string NormalizePieces(IReadOnlyList<string> tokens, int index)
-    {
-        // Join just the first piece token; full reconstruction across multiple pieces requires word offsets.
-        var t = tokens[index];
-        return t.StartsWith("##") ? t.Substring(2) : t;
-    }
-
-    private static List<(string, string)> ExtractEntities(List<string> words, List<string> wordTags)
-    {
-        var entities = new List<(string, string)>();
-        var current = new List<string>();
-        string currentType = null;
-        for (int i = 0; i < words.Count; i++)
-        {
-            var t = wordTags[i];
-            if (t == "O")
-            {
-                if (current.Count > 0)
-                {
-                    entities.Add((string.Join(" ", current), currentType ?? ""));
-                    current.Clear();
-                    currentType = null;
-                }
-                continue;
-            }
-            var parts = t.Split('-');
-            var bio = parts[0];
-            var ent = parts.Length > 1 ? parts[1] : "";
-            if (bio == "B" || (currentType != null && ent != currentType))
-            {
-                if (current.Count > 0)
-                    entities.Add((string.Join(" ", current), currentType ?? ""));
-                current.Clear();
-                current.Add(words[i]);
-                currentType = ent;
-            }
-            else
-            {
-                current.Add(words[i]);
-                currentType = ent;
-            }
-        }
-        if (current.Count > 0)
-            entities.Add((string.Join(" ", current), currentType ?? ""));
-        return entities;
-    }
 }

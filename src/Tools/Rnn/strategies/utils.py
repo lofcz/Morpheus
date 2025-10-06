@@ -50,12 +50,15 @@ TITLES_BEFORE = [
     "prom. umělec", "promovaný umělec", "promovaná umělkyně",
     "prom. pedagog", "promovaný pedagog", "promovaná pedagožka",
     "prom. sociolog", "promovaný sociolog", "promovaná socioložka",
+    # Full word titles
+    "magistr", "inženýr", "doktor", "bakalář", "profesor", "docent"
 ]
 TITLES_AFTER = [
     "Ph.D.", "DSc.", "CSc.", "Dr.", "DrSc.", "Th.D.", "DiS.", "dr. h. c.",
     "prof. h. c.", "MBA", "LL.M.", "Jr.", "Sr.", "PP.", "J.Em.", "J.Exc.",
     "J.M.", "Vdp.", "AMPLMUS", "A.R.D.", "Vldp.", "R.D.", "Dp.", "Vp.",
-    "Rev. dom.", "Ct.p.", "V.G.", "P.A.", "J.C.D.", "S.T.D.", "D.D.", "Dr. eccl."
+    "Rev. dom.", "Ct.p.", "V.G.", "P.A.", "J.C.D.", "S.T.D.", "D.D.", "Dr. eccl.",
+    "Ph.D", "PhD" # Variations
 ]
 
 
@@ -134,19 +137,48 @@ def cripple_entity(text: str) -> str:
     # 1. Probabilistically remove diacritics (very common)
     if random.random() < 0.5:
         text = "".join(
-            c if c not in "áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽąćęłńóśźżĄĆĘŁŃÓŚŹŻäôĺľŕäôĺľŕё" else unicodedata.normalize("NFD", c)[0]
-            for c in text
+            c for c in unicodedata.normalize("NFD", text)
+            if unicodedata.category(c) != "Mn"
         )
-    # 2. Introduce typos: swap adjacent characters 5% of the time
+
+    # 2. Introduce keyboard-based typos (e.g., 'a' -> 's')
+    if random.random() < 0.1 and len(text) > 1:
+        chars = list(text)
+        idx = random.randint(0, len(text) - 1)
+        key_map = {
+            'a': 's', 's': 'ad', 'd': 'sf', 'f': 'dg', 'g': 'fh', # etc.
+        }
+        if chars[idx].lower() in key_map:
+            swap_chars = key_map[chars[idx].lower()]
+            swap_char = random.choice(swap_chars)
+            chars[idx] = swap_char.upper() if chars[idx].isupper() else swap_char
+            text = "".join(chars)
+
+    # 3. Introduce other diacritic mistakes (e.g., 'á' -> 'í')
+    if random.random() < 0.1 and len(text) > 1:
+        chars = list(text)
+        idx = random.randint(0, len(text) - 1)
+        diacritic_map = {
+            'á': 'íéú', 'í': 'áéú', 'é': 'áíú', 'ú': 'áíé',
+        }
+        if chars[idx].lower() in diacritic_map:
+            swap_chars = diacritic_map[chars[idx].lower()]
+            swap_char = random.choice(swap_chars)
+            chars[idx] = swap_char.upper() if chars[idx].isupper() else swap_char
+            text = "".join(chars)
+            
+    # 4. Swap adjacent characters
     if random.random() < 0.05 and len(text) > 2:
         idx = random.randint(0, len(text) - 2)
         chars = list(text)
         chars[idx], chars[idx + 1] = chars[idx + 1], chars[idx]
         text = "".join(chars)
-    # 3. Randomly remove a character 3% of the time
+        
+    # 5. Randomly remove a character
     if random.random() < 0.03 and len(text) > 2:
         idx = random.randint(0, len(text) - 1)
         text = text[:idx] + text[idx + 1 :]
+        
     return text
 
 
@@ -227,10 +259,12 @@ def corrupt_title_string(title: str) -> str:
     # Random casing variations (10% chance to uppercase)
     if random.random() < 0.10:
         s = s.upper()
-    
+
     # --- Dot and Space Corruption ---
-    # This section manipulates dots and can introduce spaces, which increases the token count.
-    if "." in s:
+    if random.random() < 0.2:
+        # Add a dot after every single letter
+        s = ".".join(list(s.replace(".", "").replace(" ", ""))) + "."
+    elif "." in s:
         roll = random.random()
         if roll < 0.30:  # Remove all dots
             s = s.replace(".", "")
@@ -238,21 +272,33 @@ def corrupt_title_string(title: str) -> str:
             s = "".join(c if c != '.' or random.random() > 0.5 else '' for c in s)
         elif roll < 0.70:  # Add spaces around dots
             if random.random() < 0.5:
-                s = s.replace(".", " .")  # e.g., "MUDr." -> "MUDr ."
+                s = s.replace(".", " .")
             else:
-                s = s.replace(".", " . ")  # e.g., "MUDr." -> "MUDr . "
+                s = s.replace(".", " . ")
         elif roll < 0.80:  # Double some dots
             s = "".join(c if c != '.' or random.random() > 0.5 else '..' for c in s)
-        # else: keep dots as is (20% chance)
+    elif random.random() < 0.3:
+        # Add dots randomly to titles that don't have them
+        chars = list(s)
+        for i in range(len(chars)):
+            if random.random() < 0.4:
+                chars[i] = chars[i] + "."
+        s = "".join(chars)
 
     # --- Whitespace Injection inside abbreviated titles ---
-    # This will also increase token count. e.g., "Ing." -> "I ng."
+    # e.g., "Ing." -> "I ng."
     if "." in s and len(s) > 2 and random.random() < 0.15:
-        # Find a random place to insert a space, but not at the start/end or next to an existing space
         eligible_indices = [i for i, c in enumerate(s) if i > 0 and c != ' ' and s[i-1] != ' ']
         if eligible_indices:
             idx_to_insert = random.choice(eligible_indices)
             s = s[:idx_to_insert] + " " + s[idx_to_insert:]
+
+    # --- Spaced Acronym Corruption ---
+    # e.g., "mgr." -> "m. g. r."
+    if "." in s and len(s) < 6 and random.random() < 0.2:
+        base = s.replace(".", "")
+        if len(base) > 1:
+            s = ". ".join(list(base)) + "."
 
     # Minor typo: swap or substitute a character (letters only)
     if random.random() < 0.10 and len(s) > 2:
@@ -263,6 +309,5 @@ def corrupt_title_string(title: str) -> str:
             chars[i] = random.choice("abcdefghijklmnopqrstuvwxyz")
             s = "".join(chars)
             
-    # Final cleanup: ensure multiple spaces are collapsed into one.
-    # This is critical for ensuring split() works as expected by the tagger.
+    # Final cleanup
     return " ".join(s.split())

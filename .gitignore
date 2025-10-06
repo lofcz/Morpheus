@@ -16,3 +16,4 @@ src/Tools/Rnn/data/classes/sources/companies/companies_7m.txt
 src/Tools/Rnn/data/dataset.csv
 apiKey.txt
 __pycache__
+src/Tools/Rnn/data/corpus.txt

@@ -181,39 +181,8 @@ def main():
     # Precompute single-word names for remix_single_per strategy
     single_names = [n for n in names if len(n.split()) == 1]
 
-    # --- Noise Injection: Probabilistically strip suffixes from companies ---
-    if companies:
-        print("Injecting noise: Probabilistically stripping suffixes from company names...")
-        processed_companies = []
-        # Sort by length, longest first, to match "spol. s r.o." before "s.r.o."
-        sorted_suffixes = sorted(COMPANY_SUFFIXES, key=len, reverse=True)
-        
-        stripped_count = 0
-        for company in companies:
-            # With a 40% probability, try to strip a suffix
-            if random.random() < 0.4:
-                original_company = company
-                company_lower = company.lower()
-                
-                for suffix in sorted_suffixes:
-                    suffix_lower = suffix.lower()
-                    # Check for suffix as a whole word at the end, possibly preceded by a comma
-                    if company_lower.endswith(f" {suffix_lower}") or company_lower.endswith(f",{suffix_lower}"):
-                        # Find the start of the suffix in the original string to slice correctly
-                        suffix_start_index = company_lower.rfind(suffix_lower)
-                        company = company[:suffix_start_index].strip(" ,")
-                        break # Stop after the first (longest) match
-                
-                # If after stripping the company name is empty, revert to original
-                if not company.strip():
-                    company = original_company
-                elif company != original_company:
-                    stripped_count += 1
-
-            processed_companies.append(company)
-        
-        companies = processed_companies # Replace the original list
-        print(f"Stripped suffixes from {stripped_count:,} company names.")
+    # --- REMOVED: The slow, on-the-fly augmentation is now done in a separate preprocessing script ---
+    # The companies.txt file is now expected to be the pre-processed, augmented version.
 
     # --- Noise Injection: Introduce typos and remove diacritics ---
     if names:

@@ -16,121 +16,116 @@ def remix_name_with_title(names: List[str]) -> Tuple[str, str]:
     name_text = random.choice(names)
     name_words, name_tags = tag_entity(name_text, "PER")
     
-    # --- Decide on the complexity of the title pattern ---
-    pattern_roll = random.random()
+    # Define a clearer set of patterns with explicit weights
+    patterns = [
+        ("single_before", 0.35),
+        ("single_after", 0.25),
+        ("one_before_one_after", 0.15),
+        ("two_before", 0.05),
+        ("two_after", 0.05),
+        ("many_titles", 0.10),
+        ("duplicated_title", 0.05),
+    ]
+    
+    # Filter out patterns that can't be generated with the available titles
+    available_patterns = []
+    if TITLES_BEFORE:
+        available_patterns.extend([p for p in patterns if "before" in p[0] or "duplicated" in p[0]])
+    if TITLES_AFTER:
+        available_patterns.extend([p for p in patterns if "after" in p[0]])
+    if len(TITLES_BEFORE) > 1 and len(TITLES_AFTER) > 1:
+        available_patterns.append(("many_titles", 0.10))
+    
+    # Remove duplicates and get unique patterns
+    available_patterns = sorted(list(set(available_patterns)))
+    
+    if not available_patterns:
+        return name_text, " ".join(name_tags)
+        
+    pattern_names = [p[0] for p in available_patterns]
+    pattern_weights = [p[1] for p in available_patterns]
+    
+    # Normalize weights to sum to 1
+    total_weight = sum(pattern_weights)
+    if total_weight > 0:
+        pattern_weights = [w / total_weight for w in pattern_weights]
+    
+    chosen_pattern = random.choices(pattern_names, weights=pattern_weights, k=1)[0]
 
     final_words = []
     final_tags = []
 
-    # Case 1: Simple, single title (most common) - 40% chance
-    if pattern_roll < 0.6:
-        place_it_wrong = random.random() < 0.20
-        place_before = random.random() < 0.7 
+    if chosen_pattern == "single_before":
+        title = corrupt_title_string(random.choice(TITLES_BEFORE))
+        title_words, title_tags = tag_title_text(title)
+        final_words = title_words + name_words
+        final_tags = title_tags + name_tags
+    
+    elif chosen_pattern == "single_after":
+        title = corrupt_title_string(random.choice(TITLES_AFTER))
+        title_words, title_tags = tag_title_text(title)
+        final_words = name_words + [","] + title_words
+        final_tags = name_tags + [O] + title_tags
 
-        if not place_it_wrong:
-            if place_before and TITLES_BEFORE:
-                title = corrupt_title_string(random.choice(TITLES_BEFORE))
-                title_words, title_tags = tag_title_text(title)
-                # 20% chance to add comma after title before name (e.g., "Prof., Jan Novák")
-                if random.random() < 0.2:
-                    final_words = title_words + [","] + name_words
-                    final_tags = title_tags + [O] + name_tags
-                else:
-                    final_words = title_words + name_words
-                    final_tags = title_tags + name_tags
-            elif TITLES_AFTER:
-                title = corrupt_title_string(random.choice(TITLES_AFTER))
-                title_words, title_tags = tag_title_text(title)
-                final_words = name_words + [","] + title_words
-                final_tags = name_tags + [O] + title_tags
-        else: # Intentionally place it wrong
-            if place_before and TITLES_BEFORE:
-                # Wrongly place before-name title after the name
-                title = corrupt_title_string(random.choice(TITLES_BEFORE))
-                title_words, title_tags = tag_title_text(title)
-                final_words = name_words + [","] + title_words
-                final_tags = name_tags + [O] + title_tags
-            elif TITLES_AFTER:
-                # Wrongly place after-name title before the name
-                title = corrupt_title_string(random.choice(TITLES_AFTER))
-                title_words, title_tags = tag_title_text(title)
-                final_words = title_words + name_words
-                final_tags = title_tags + name_tags
-
-    # Case 2: Two titles (less common) - 30% chance
-    elif pattern_roll < 0.9 and len(TITLES_BEFORE) > 1 and len(TITLES_AFTER) > 1:
-        sub_pattern = random.choice(["before_before", "after_after", "before_after"])
-
-        if sub_pattern == "before_before":
+    elif chosen_pattern == "one_before_one_after":
+        if TITLES_BEFORE and TITLES_AFTER:
+            t_before = corrupt_title_string(random.choice(TITLES_BEFORE))
+            t_after = corrupt_title_string(random.choice(TITLES_AFTER))
+            tb_words, tb_tags = tag_title_text(t_before)
+            ta_words, ta_tags = tag_title_text(t_after)
+            final_words = tb_words + name_words + [","] + ta_words
+            final_tags = tb_tags + name_tags + [O] + ta_tags
+            
+    elif chosen_pattern == "two_before":
+        if len(TITLES_BEFORE) > 1:
             title1, title2 = random.sample(TITLES_BEFORE, 2)
             t1_words, t1_tags = tag_title_text(corrupt_title_string(title1))
             t2_words, t2_tags = tag_title_text(corrupt_title_string(title2))
             final_words = t1_words + t2_words + name_words
             final_tags = t1_tags + t2_tags + name_tags
-        elif sub_pattern == "after_after":
+
+    elif chosen_pattern == "two_after":
+        if len(TITLES_AFTER) > 1:
             title1, title2 = random.sample(TITLES_AFTER, 2)
             t1_words, t1_tags = tag_title_text(corrupt_title_string(title1))
             t2_words, t2_tags = tag_title_text(corrupt_title_string(title2))
             final_words = name_words + [","] + t1_words + t2_words
             final_tags = name_tags + [O] + t1_tags + t2_tags
-        else: # "before_after"
-            title1 = random.choice(TITLES_BEFORE)
-            title2 = random.choice(TITLES_AFTER)
-            t1_words, t1_tags = tag_title_text(corrupt_title_string(title1))
-            t2_words, t2_tags = tag_title_text(corrupt_title_string(title2))
-            final_words = t1_words + name_words + [","] + t2_words
-            final_tags = t1_tags + name_tags + [O] + t2_tags
             
-    # Case 3: Many titles (3–8 total), mix before and after, commas optional - 8% chance
-    elif pattern_roll < 0.98:
-        # Decide how many total titles
-        total_titles = random.randint(3, 8)
-        # Prefer both sides populated
-        before_count = random.randint(1, max(1, total_titles - 1))
-        after_count = total_titles - before_count
+    elif chosen_pattern == "many_titles":
+        # Similar logic as before, but now it's an explicit choice
+        before_count = random.randint(1, 4)
+        after_count = random.randint(1, 4)
+        
+        before_words, before_tags = [], []
+        if len(TITLES_BEFORE) > 0:
+            for _ in range(before_count):
+                title = corrupt_title_string(random.choice(TITLES_BEFORE))
+                tw, tt = tag_title_text(title)
+                before_words.extend(tw)
+                before_tags.extend(tt)
+        
+        after_words, after_tags = [], []
+        if len(TITLES_AFTER) > 0:
+            for _ in range(after_count):
+                title = corrupt_title_string(random.choice(TITLES_AFTER))
+                tw, tt = tag_title_text(title)
+                after_words.extend(tw)
+                after_tags.extend(tt)
 
-        # Build before titles (mostly from TITLES_BEFORE, with some wrong placements)
-        before_words: list[str] = []
-        before_tags: list[str] = []
-        for _ in range(before_count):
-            src_list = TITLES_BEFORE if random.random() > 0.2 else TITLES_AFTER
-            title = corrupt_title_string(random.choice(src_list))
-            tw, tt = tag_title_text(title)
-            # Occasionally separate multiple titles with comma
-            if before_words and random.random() < 0.3:
-                before_words += [","]
-                before_tags += [O]
-            before_words += tw
-            before_tags += tt
-
-        # Build after titles (mostly from TITLES_AFTER, with some wrong placements)
-        after_words: list[str] = []
-        after_tags: list[str] = []
-        for _ in range(after_count):
-            src_list = TITLES_AFTER if random.random() > 0.2 else TITLES_BEFORE
-            title = corrupt_title_string(random.choice(src_list))
-            tw, tt = tag_title_text(title)
-            # Separate multiple after titles optionally with comma
-            if after_words and random.random() < 0.6:
-                after_words += [","]
-                after_tags += [O]
-            after_words += tw
-            after_tags += tt
-
-        # Optionally place a comma between name and after titles (but sometimes not, to allow patterns like 'ing. name phd')
-        place_name_after_comma = random.random() < 0.6
-
-        final_words = before_words + name_words + ([","] if (after_words and place_name_after_comma) else []) + after_words
-        final_tags = before_tags + name_tags + ([O] if (after_words and place_name_after_comma) else []) + after_tags
-
-    # Case 4: Duplicated title (e.g., Mgr. et Mgr.) - remaining chance
-    else:
+        final_words = before_words + name_words + ([","] if after_words else []) + after_words
+        final_tags = before_tags + name_tags + ([O] if after_words else []) + after_tags
+        
+    elif chosen_pattern == "duplicated_title":
         if TITLES_BEFORE:
-            title = corrupt_title_string(random.choice(["Mgr.", "Ing."]))
-            separator = random.choice(["et", "a"])
-            title_words, title_tags = tag_title_text(title)
-            final_words = title_words + [separator] + title_words + name_words
-            final_tags = title_tags + [O] + title_tags + name_tags
+            # Use a broader list of common titles for duplication
+            common_titles = [t for t in TITLES_BEFORE if len(t) < 5 and "." in t]
+            if common_titles:
+                title = corrupt_title_string(random.choice(common_titles))
+                separator = random.choice(["et", "a"])
+                title_words, title_tags = tag_title_text(title)
+                final_words = title_words + [separator] + title_words + name_words
+                final_tags = title_tags + [O] + title_tags + name_tags
     
     # Final fallback if something went wrong
     if not final_words:
@@ -160,7 +155,7 @@ def remix_name_with_title(names: List[str]) -> Tuple[str, str]:
             # Pattern 2: `,` + `word` -> `,word` (50% chance)
             elif current_word == ',' and random.random() < 0.5:
                 merged_words.append(current_word + next_word)
-                merged_tags.append(next_tag)
+                merged_tags.append(O) # Always tag comma-prefixed words as O
                 i += 2
                 merged = True
             
