@@ -16,6 +16,14 @@ def remix_two_names(names: List[str]) -> Tuple[str, str]:
     name1_words = name1_text.split()
     name2_words = name2_text.split()
     
+    # Add surname-first awareness (30% chance to shuffle each name)
+    if random.random() < 0.3 and len(name1_words) >= 2:
+        name1_text = " ".join(reversed(name1_words))
+        name1_words = name1_text.split()
+    if random.random() < 0.3 and len(name2_words) >= 2:
+        name2_text = " ".join(reversed(name2_words))
+        name2_words = name2_text.split()
+    
     # 30% chance to create a single hyphenated token from the first word of each name
     if random.random() < 0.3 and name1_words and name2_words:
         text = f"{name1_words[0]}-{name2_words[0]}"

@@ -45,11 +45,12 @@ def remix_email(names: List[str]) -> Tuple[str, str]:
             words.append(separator)
             tags.append(O)
     
-    # 20% chance to add spaces around separator, 80% concatenate without spaces
-    if random.random() < 0.2:
-        # With spaces: "jan . novák" → "B-PER O I-PER"
+    # When using underscore, ALWAYS use spaced version (underscores split in BPE)
+    # For other separators, 20% chance to add spaces, 80% concatenate
+    if separator == "_" or random.random() < 0.2:
+        # With spaces: "jan . novák" → "B-PER O I-PER" or "maly _ bobik" → "B-PER O I-PER"
         return " ".join(words), " ".join(tags)
     else:
-        # No spaces: "jan.novák" → "B-PER" (concatenated text, single tag)
+        # No spaces (dots/dashes only): "jan.novák" → "B-PER" (concatenated text, single tag)
         text = "".join(words)  # Concatenate without spaces
         return text, B_PER  # Single token gets a single B-PER tag

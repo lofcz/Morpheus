@@ -15,11 +15,11 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # --- Configuration ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(SCRIPT_DIR, "data", "dataset.csv")
+DATA_FILE = os.path.join(SCRIPT_DIR, "data", "dataset_clean_1m.csv")  # Updated to use clean 1M dataset
 WORDS_FILE = os.path.join(SCRIPT_DIR, "data", "classes", "sources", "words", "cs_raw.txt") # NEW
 CORPUS_FILE = os.path.join(SCRIPT_DIR, "data", "corpus.txt")
 TOKENIZER_SAVE_PATH = os.path.join(SCRIPT_DIR, "custom-bpe-tokenizer.json")
-VOCAB_SIZE = 16000 # Increased vocab size for a more diverse corpus
+VOCAB_SIZE = 32000  # Increased for better coverage of 1M samples
 
 
 def normalize_text(text: str) -> str:

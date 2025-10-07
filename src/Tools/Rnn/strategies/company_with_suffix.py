@@ -19,7 +19,8 @@ def remix_company_with_suffix(names: List[str], companies: List[str]) -> Tuple[s
         base_words, base_tags = tag_entity(base_text, "ORG")
     elif names:
         base_text = random.choice(names)
-        base_words, base_tags = tag_entity(base_text, "ORG") # Tag as ORG in this context
+        # FIX: Keep name as PER, not ORG
+        base_words, base_tags = tag_entity(base_text, "PER")
     else: # Fallback
         return "", ""
 
@@ -27,7 +28,18 @@ def remix_company_with_suffix(names: List[str], companies: List[str]) -> Tuple[s
     # Cripple the suffix to generate variations (e.g., "s.r.o." -> "sro")
     crippled_suffix = cripple_text(suffix)
     
+    # Build final words and tags
     final_words = base_words + crippled_suffix.split()
-    final_tags = base_tags + [I_ORG] * len(crippled_suffix.split())
+    
+    if use_company:
+        # Company base: entire thing is ORG
+        final_tags = base_tags + [I_ORG] * len(crippled_suffix.split())
+    else:
+        # Name base: name stays PER, suffix becomes separate ORG entity
+        suffix_parts = crippled_suffix.split()
+        if suffix_parts:
+            final_tags = base_tags + ["B-ORG"] + ["I-ORG"] * (len(suffix_parts) - 1)
+        else:
+            final_tags = base_tags
 
     return " ".join(final_words), " ".join(final_tags)

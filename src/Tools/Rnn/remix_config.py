@@ -16,67 +16,70 @@ from strategies import (
     remix_company_with_multiple_names, remix_name_orgtype_company,
     remix_single_org, remix_entity_in_context, remix_common_phrase,
     remix_multi_word_nickname, remix_boundary_stress_test,
-    remix_adjacent_entities
+    remix_adjacent_entities, remix_surname_comma_name
 )
 
 # --- Strategy Definitions ---
 # Each strategy is a function that returns a (text, tags) tuple.
 # The `weight` determines how often each strategy is chosen.
 REMIX_STRATEGIES = [
-    # --- HIGH-PRIORITY NEGATIVE EXAMPLES & CONTEXT ---
+    # --- REBALANCED FOR CLEAN DATA (Phase 2 Fix) ---
+    # Prioritize clean, realistic patterns; reduce noisy stress tests
+    
+    # HIGH-PRIORITY: Clean, common patterns
+    {
+        "name": "remix_single_entity",
+        "weight": 0.20,  # INCREASED: Clean single entities
+        "func": remix_single_entity
+    },
+    {"func": remix_two_names, "weight": 0.15},  # Common pattern + surname handling
+    {"func": remix_surname_comma_name, "weight": 0.12},  # CRITICAL: Czech "Surname, Name" format
+    {"func": remix_name_and_company, "weight": 0.13},  # Common pattern
+    {"func": remix_name_with_title, "weight": 0.08},  # REDUCED: Until fix is verified
+    {"func": remix_name_company_patterns, "weight": 0.10},  # Complex but realistic
+    
+    # MODERATE: Realistic variations
     {
         "name": "remix_common_phrase",
-        "weight": 0.25, # NEW: High weight for realistic non-entity phrases
+        "weight": 0.08,
         "func": remix_common_phrase
     },
     {
-        "name": "remix_o_phrase",
-        "weight": 0.10, # Reduced weight, but still important for single non-entity words
-        "func": remix_o_phrase
-    },
-    {
         "name": "remix_single_org",
-        "weight": 0.15, # High weight for clean, single-token orgs
+        "weight": 0.08,
         "func": remix_single_org
     },
     {
         "name": "remix_entity_in_context",
-        "weight": 0.15, # High weight for contextualized entities
+        "weight": 0.08,
         "func": remix_entity_in_context
     },
-
-    # --- Foundational single-entity strategies ---
-    {
-        "name": "remix_single_entity",
-        "weight": 0.05,
-        "func": remix_single_entity
-    },
-    {"func": remix_two_names, "weight": 0.08},
-    {"func": remix_name_and_company, "weight": 0.10},  # Kept for its unique patterns
-    
-    # Czech-specific and common variations
-    {"func": remix_name_with_title, "weight": 0.08},
-    {"func": remix_name_with_nickname, "weight": 0.05},
-    {"func": remix_company_with_suffix, "weight": 0.08},  # Kept for person -> org pattern
-    {"func": remix_email, "weight": 0.05},
+    {"func": remix_company_with_suffix, "weight": 0.06},
+    {"func": remix_name_with_random_words, "weight": 0.06},
     {"func": remix_name_and_location, "weight": 0.05},
-    {"func": remix_gibberish, "weight": 0.03},
-    {"func": remix_single_per, "weight": 0.03},
+    
+    # LOW: Special cases and less common patterns
+    {
+        "name": "remix_o_phrase",
+        "weight": 0.03,
+        "func": remix_o_phrase
+    },
+    {"func": remix_name_with_nickname, "weight": 0.03},
+    {"func": remix_email, "weight": 0.03},
     {"func": remix_hyphenated_name, "weight": 0.03},
-    {"func": remix_o_phrase, "weight": 0.03},
     {"func": remix_nick_handle, "weight": 0.03},
-    {"func": remix_multi_word_nickname, "weight": 0.05}, # NEW
-    {"func": remix_boundary_stress_test, "weight": 0.10}, # NEW
-    {"func": remix_adjacent_entities, "weight": 0.10}, # NEW
-    {"func": remix_loc_prep_city, "weight": 0.03},
-    {"func": remix_org_with_context, "weight": 0.03},
-    {"func": remix_name_orgtype_company, "weight": 0.08},  # Name + org type + company
-    {"func": remix_name_with_random_words, "weight": 0.10},  # Name with random O words
-
-    # Complex patterns
-    {"func": remix_name_company_patterns, "weight": 0.15},
-    {"func": remix_company_with_multiple_names, "weight": 0.05},
-    {"func": remix_single_city, "weight": 0.03},
+    {"func": remix_multi_word_nickname, "weight": 0.03},
+    {"func": remix_adjacent_entities, "weight": 0.04},
+    {"func": remix_loc_prep_city, "weight": 0.02},
+    {"func": remix_org_with_context, "weight": 0.02},
+    {"func": remix_name_orgtype_company, "weight": 0.04},
+    {"func": remix_company_with_multiple_names, "weight": 0.03},
+    {"func": remix_single_city, "weight": 0.02},
+    {"func": remix_single_per, "weight": 0.02},
+    {"func": remix_gibberish, "weight": 0.01},
+    
+    # VERY LOW: Stress tests (reduced to minimal level)
+    {"func": remix_boundary_stress_test, "weight": 0.005},  # REDUCED: Too aggressive
 ]
 
 # --- Strategy Requirements ---
@@ -110,6 +113,7 @@ STRATEGY_REQUIREMENTS = {
     remix_name_orgtype_company: ["names", "companies", "org_types"],
     remix_single_org: ["companies"],
     remix_entity_in_context: ["names", "companies", "cities"],
+    remix_surname_comma_name: ["names"],  # NEW: Critical for Czech format
 }
 
 # Special validation conditions for strategies
@@ -131,6 +135,7 @@ STRATEGY_SPECIAL_CONDITIONS = {
     remix_loc_prep_city: lambda data: bool(data.get("cities")),
     remix_org_with_context: lambda data: bool(data.get("companies")),
     remix_name_with_random_words: lambda data: bool(data.get("names")) and bool(data.get("o_phrase_words")),
+    remix_surname_comma_name: lambda data: bool(data.get("names")),  # NEW: Czech "Surname, Name" format
 }
 
 

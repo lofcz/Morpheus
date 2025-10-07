@@ -114,7 +114,13 @@ def extract_entities(words: List[str], word_tags: List[str]) -> List[Tuple[str, 
 
 
 def run_inference_loaded(session: ort.InferenceSession, tokenizer: Tokenizer, text: str, max_len: int) -> None:
-    encoding = tokenizer.encode(text)
+    # Normalize text exactly like training (see train.py line 57-62)
+    normalized_text = text.strip()
+    if normalized_text:
+        normalized_text = " ".join(normalized_text.split())
+        normalized_text = normalized_text.casefold()
+    
+    encoding = tokenizer.encode(normalized_text)
     input_ids = encoding.ids
     word_ids = encoding.word_ids
 
@@ -179,6 +185,7 @@ def run_inference_loaded(session: ort.InferenceSession, tokenizer: Tokenizer, te
     entities = extract_entities(words, word_tags)
 
     print("Input:", text)
+    print("Normalized:", normalized_text)
     print("Sequence:", seq_line)
     if entities:
         print("Entities:")
@@ -196,7 +203,7 @@ def run_inference(model_path: str, tokenizer_path: str, text: str, max_len: int)
 
 def main():
     parser = argparse.ArgumentParser(description="Run ONNX NER inference on input text.")
-    parser.add_argument("--model", default=os.path.join(os.path.dirname(__file__), "name_classifier.onnx"))
+    parser.add_argument("--model", default=os.path.join(os.path.dirname(__file__), "name_classifier_transformer.onnx"))
     parser.add_argument("--tokenizer", default=os.path.join(os.path.dirname(__file__), "custom-bpe-tokenizer.json"))
     parser.add_argument("--max-len", type=int, default=128)
     parser.add_argument("--text", default=None, help="Input text to analyze; if omitted, starts REPL")

@@ -32,6 +32,7 @@ from .common_phrase import remix_common_phrase
 from .multi_word_nickname import remix_multi_word_nickname
 from .boundary_stress_test import remix_boundary_stress_test
 from .adjacent_entities import remix_adjacent_entities
+from .surname_comma_name import remix_surname_comma_name
 
 __all__ = [
     'remix_gibberish',
@@ -60,4 +61,5 @@ __all__ = [
     'remix_multi_word_nickname',
     'remix_boundary_stress_test',
     'remix_adjacent_entities',
+    'remix_surname_comma_name',
 ]

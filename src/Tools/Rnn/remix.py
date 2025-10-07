@@ -192,8 +192,8 @@ def main():
         for name in names:
             # Always keep the original
             crippled_names_augmented.append(name)
-            # With a 30% probability, also add a crippled version
-            if random.random() < 0.3:
+            # REDUCED: 10% probability for typos (down from 30%)
+            if random.random() < 0.1:
                 crippled_name = cripple_entity(name)
                 if crippled_name != name:
                     crippled_names_augmented.append(crippled_name)
@@ -207,7 +207,8 @@ def main():
         iy_augmented_names = []
         for name in names:
             iy_augmented_names.append(name)
-            if random.random() < 0.20:
+            # REDUCED: 5% probability for i/y swaps (down from 20%)
+            if random.random() < 0.05:
                 iy_swapped_name = cripple_iy(name)
                 if iy_swapped_name != name:
                     iy_augmented_names.append(iy_swapped_name)
@@ -223,8 +224,8 @@ def main():
         for company in companies:
             # Always keep the original
             crippled_companies_augmented.append(company)
-            # With a 30% probability, also add a crippled version
-            if random.random() < 0.3:
+            # REDUCED: 10% probability for typos (down from 30%)
+            if random.random() < 0.1:
                 crippled_company = cripple_entity(company)
                 if crippled_company != company:
                     crippled_companies_augmented.append(crippled_company)
@@ -237,7 +238,8 @@ def main():
         iy_augmented_companies = []
         for company in companies:
             iy_augmented_companies.append(company)
-            if random.random() < 0.20:
+            # REDUCED: 5% probability for i/y swaps (down from 20%)
+            if random.random() < 0.05:
                 iy_swapped_company = cripple_iy(company)
                 if iy_swapped_company != company:
                     iy_augmented_companies.append(iy_swapped_company)

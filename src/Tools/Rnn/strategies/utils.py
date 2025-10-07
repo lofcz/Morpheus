@@ -252,62 +252,46 @@ def tag_title_text(title_text: str) -> Tuple[List[str], List[str]]:
 
 
 def corrupt_title_string(title: str) -> str:
-    """Produce realistic corruptions of titles: missing/extra dots, spacing, casing, minor typos."""
-    # Always start with lowercase to ensure consistency
+    """
+    REDUCED CORRUPTION: Only apply mild, realistic variations.
+    Examples:
+      - "Ing." -> "Ing" (remove dot), "ing." (lowercase), "ING." (uppercase)
+      - "Ph.D." -> "PhD" (remove dots), "Ph. D." (add space)
+    
+    NO MORE: excessive dot fragmentation, random letter insertion, aggressive spacing
+    """
+    if not title:
+        return title
+    
     s = title.lower()
     
-    # Random casing variations (10% chance to uppercase)
-    if random.random() < 0.10:
+    # 1. Casing variations (30% total: 15% upper, 15% keep lower, 70% original)
+    roll = random.random()
+    if roll < 0.15:
         s = s.upper()
-
-    # --- Dot and Space Corruption ---
-    if random.random() < 0.2:
-        # Add a dot after every single letter
-        s = ".".join(list(s.replace(".", "").replace(" ", ""))) + "."
-    elif "." in s:
+    elif roll < 0.30:
+        pass  # Keep lowercase
+    else:
+        s = title  # Keep original casing
+    
+    # 2. Dot variations (only if title has dots, and only simple changes)
+    if "." in s:
         roll = random.random()
-        if roll < 0.30:  # Remove all dots
+        if roll < 0.40:  # 40% chance to remove all dots
             s = s.replace(".", "")
-        elif roll < 0.50:  # Remove some dots
-            s = "".join(c if c != '.' or random.random() > 0.5 else '' for c in s)
-        elif roll < 0.70:  # Add spaces around dots
-            if random.random() < 0.5:
-                s = s.replace(".", " .")
-            else:
-                s = s.replace(".", " . ")
-        elif roll < 0.80:  # Double some dots
-            s = "".join(c if c != '.' or random.random() > 0.5 else '..' for c in s)
-    elif random.random() < 0.3:
-        # Add dots randomly to titles that don't have them
-        chars = list(s)
-        for i in range(len(chars)):
-            if random.random() < 0.4:
-                chars[i] = chars[i] + "."
-        s = "".join(chars)
-
-    # --- Whitespace Injection inside abbreviated titles ---
-    # e.g., "Ing." -> "I ng."
-    if "." in s and len(s) > 2 and random.random() < 0.15:
-        eligible_indices = [i for i, c in enumerate(s) if i > 0 and c != ' ' and s[i-1] != ' ']
-        if eligible_indices:
-            idx_to_insert = random.choice(eligible_indices)
-            s = s[:idx_to_insert] + " " + s[idx_to_insert:]
-
-    # --- Spaced Acronym Corruption ---
-    # e.g., "mgr." -> "m. g. r."
-    if "." in s and len(s) < 6 and random.random() < 0.2:
-        base = s.replace(".", "")
-        if len(base) > 1:
-            s = ". ".join(list(base)) + "."
-
-    # Minor typo: swap or substitute a character (letters only)
-    if random.random() < 0.10 and len(s) > 2:
+        elif roll < 0.60:  # 20% chance to add space after dot
+            s = s.replace(".", ". ")
+    
+    # 3. Minor typo (5% chance) - only adjacent character swap
+    if random.random() < 0.05 and len(s) > 2:
         letters = [i for i, c in enumerate(s) if c.isalpha()]
         if letters:
             i = random.choice(letters)
             chars = list(s)
-            chars[i] = random.choice("abcdefghijklmnopqrstuvwxyz")
+            # Only swap with adjacent character, not random replacement
+            if i + 1 < len(chars) and chars[i+1].isalpha():
+                chars[i], chars[i+1] = chars[i+1], chars[i]
             s = "".join(chars)
-            
+    
     # Final cleanup
     return " ".join(s.split())

@@ -708,38 +708,12 @@ def main():
                 if args.max_steps_per_epoch is not None and step_in_epoch >= args.max_steps_per_epoch:
                     break
         
-            # Validation - use EMA model for better results
-            model.eval()
-            ema_model.eval()
-            total_val_loss = 0
-            total_correct_predictions = 0
-            total_tokens = 0
-            with torch.no_grad():
-                all_true_epoch: list[int] = []
-                all_pred_epoch: list[int] = []
-                for batch in val_loader:
-                    ids = batch['ids'].to(device)
-                    byte_batch = batch['byte_ids'].to(device)
-                    labels = batch['labels'].to(device)
-                    # Use EMA model for validation (better generalization)
-                    outputs = ema_model.module(ids, byte_batch)
-                    loss = criterion(outputs.view(-1, NUM_TAGS), labels.view(-1))
-                    total_val_loss += loss.item()
-                    
-                    # Calculate token-level accuracy (ignoring padding)
-                    predicted = torch.argmax(outputs, dim=2)
-                    active_tokens = labels != -100
-                    total_correct_predictions += (predicted[active_tokens] == labels[active_tokens]).sum().item()
-                    total_tokens += active_tokens.sum().item()
-                    if active_tokens.any():
-                        all_true_epoch.extend(labels[active_tokens].view(-1).detach().cpu().tolist())
-                        all_pred_epoch.extend(predicted[active_tokens].view(-1).detach().cpu().tolist())
-
-            # Epoch-end metrics calculation and logging
+            # Epoch-end metrics (skip full validation, use mid-epoch metrics instead)
             avg_train_loss = total_train_loss / max(1, len(train_loader))
-            avg_val_loss = total_val_loss / max(1, len(val_loader)) if val_loader else 0.0
-            val_accuracy = total_correct_predictions / max(1, total_tokens)
-            val_f1 = f1_score(all_true_epoch, all_pred_epoch, average='micro') if all_true_epoch else 0.0
+            avg_val_loss = 0.0
+            val_accuracy = 0.0
+            val_f1 = 0.0
+            print("Skipping full epoch validation (using mid-epoch validation metrics instead)")
             
             # Get current learning rate to display
             current_lr = optimizer.param_groups[0]['lr']

@@ -34,8 +34,7 @@ public class Program
         Console.WriteLine("--- ONNX NER Demo (token-level) ---");
 
         var assemblyLocation = System.Reflection.Assembly.GetExecutingAssembly().Location;
-        var executionPath = Path.GetDirectoryName(assemblyLocation)!;
-        var modelPath = "name_classifier.onnx";
+        var modelPath = "name_classifier_transformer.onnx";
         var tokenizerPath = "custom-bpe-tokenizer.json";
 
         if (!File.Exists(modelPath) || !File.Exists(tokenizerPath))
@@ -79,7 +78,7 @@ public class Program
     private static void Predict(InferenceSession session, Tokenizer tokenizer, string text, long padTokenId)
     {
         // Encode returns uint[] - just the token IDs
-        var tokenIds = tokenizer.Encode(text);
+        var tokenIds = tokenizer.Encode(text.ToLowerInvariant());
         var ids = tokenIds.Select(i => (long)i).ToList();
         
         // Store original length before padding
